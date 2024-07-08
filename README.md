@@ -19,7 +19,7 @@ ssh -R <[[service name]]>:22:localhost:22 -N <[[ssh gateway]]>
 
 ### client
 ```
-ssh <[[ssh gateway]]> signsshkey < ~/.ssh/id_rsa.pub > ~/.ssh/id_rsa-cert.pub
+echo $(ssh <[[ssh gateway]]> signsshkey < ~/.ssh/id_rsa.pub) > ~/.ssh/id_rsa-cert.pub
 ssh -L <[[local port]]>:<[[service name]]>:22 -N <[[ssh gateway]]>
 ssh <[[user]]>@localhost -p <[[local port]]>
 ```

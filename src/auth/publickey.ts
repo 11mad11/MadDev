@@ -1,5 +1,5 @@
 import { Connection, ClientInfo, AuthContext, PublicKey } from "ssh2";
-import { AuthProvider } from "../gateway";
+import { AuthProvider, SSHGateway } from "../gateway";
 
 export class PublicKeyAuthProvider implements AuthProvider {
     method = "publickey" as const;
@@ -7,9 +7,20 @@ export class PublicKeyAuthProvider implements AuthProvider {
     acceptNextAlreadyMap = new WeakMap<Connection, [ClientInfo, string, PublicKey]>();
     known = new Map<string, PublicKey>();
 
+    constructor(
+        public gateway: SSHGateway
+    ) {
+
+    }
+
     auth(client: Connection, info: ClientInfo, ctx: AuthContext): void | Promise<void> {
         if (ctx.method !== "publickey")
             throw new Error("Method not publickey")
+
+        const key = this.gateway.ca.parseKey(ctx.key.data);
+
+        if (this.gateway.ca.validate(key) && key.subjects[0] && key.subjects[0].uid === ctx.username)
+            return;
 
         if (this.acceptNextMap.has(client)) {
             const [aInfo, aUsername] = this.acceptNextMap.get(client)!;
