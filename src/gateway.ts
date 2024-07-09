@@ -6,6 +6,7 @@ import { PublicKeyAuthProvider } from "./auth/publickey";
 import { SSHService } from "./services/ssh";
 import { TCPService } from "./services/tcp";
 import { CA } from "./ca";
+import { Settings } from "./settings";
 
 export interface User {
     username: string
@@ -61,6 +62,7 @@ export class SSHGateway {
     } as const satisfies Record<AuthContext["method"], AuthProvider | null>;
 
     ca = new CA();
+    setting = new Settings();
 
     constructor(
         public readonly resolveUser: (username: string) => Partial<Permissions> | undefined

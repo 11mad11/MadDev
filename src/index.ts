@@ -22,14 +22,12 @@ passAuth.setUser("foo", 'bar');
 passAuth.setUser("mad", 'mad');
 console.log(passAuth.setOTPUser("otp"));
 
-
-if (!existsSync("keys/host.key")) {
+const key = gateway.setting.getRaw("keys/host.key",()=>{
     let keys = generateKeyPairSync('ed25519', {
-
     });
-    writeFileSync("keys/host.key", keys.privateKey.export().toString());
-}
-const key = readFileSync("keys/host.key");
+    return keys.privateKey.export().toString();
+}).toString();
+
 const server = new Server({
     hostKeys: [key],
     debug: (t) => console.log(t)
