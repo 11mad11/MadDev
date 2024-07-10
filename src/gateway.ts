@@ -7,6 +7,7 @@ import { SSHService } from "./services/ssh";
 import { TCPService } from "./services/tcp";
 import { CA } from "./ca";
 import { Settings } from "./settings";
+import { Users } from "./user";
 
 export interface User {
     username: string
@@ -63,9 +64,9 @@ export class SSHGateway {
 
     ca = new CA();
     setting = new Settings();
+    users = new Users(this);
 
     constructor(
-        public readonly resolveUser: (username: string) => Partial<Permissions> | undefined
     ) {
         this.addCommand("otp", import("./commands/otp"));
         this.addCommand("signsshkey", import("./commands/signsshkey"));
@@ -118,7 +119,7 @@ export class SSHGateway {
             const username = await this.auth(client, info);
 
             const user: User = {
-                client, info, username, permission: Permissions.withDefault(this.resolveUser(username))
+                client, info, username, permission: Permissions.withDefault(this.users.resolvePermission(username))
             }
 
             this.registerCallback(user);

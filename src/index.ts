@@ -4,25 +4,26 @@ import { SSHGateway } from "./gateway";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { Permissions } from "./permission";
 
-const permByUser: Record<string, Partial<Permissions>> = {
-    foo: {
-        canRegisterService: (type, name) => type === 22 && name === "test"
+const gateway = new SSHGateway();
+
+gateway.users.setRole("admin", {
+    canGenerateOTP() {
+        return true
     },
-    mad: {
-        canGenerateOTP: () => true,
-        canUseService: () => true
-    }
-}
-const gateway = new SSHGateway(name => {
-    return permByUser[name]
-});
+    canRegisterService(type, name) {
+        return true;
+    },
+    canUseService(type, name) {
+        return true;
+    },
+})
 
 const passAuth = gateway.authsProvider.password;
 passAuth.setUser("foo", 'bar');
 passAuth.setUser("mad", 'mad');
 console.log(passAuth.setOTPUser("otp"));
 
-const key = gateway.setting.getRaw("keys/host.key",()=>{
+const key = gateway.setting.getRaw("keys/host.key", () => {
     let keys = generateKeyPairSync('ed25519', {
     });
     return keys.privateKey.export().toString();
