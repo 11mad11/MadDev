@@ -62,8 +62,8 @@ export class SSHGateway {
         hostbased: null
     } as const satisfies Record<AuthContext["method"], AuthProvider | null>;
 
-    ca = new CA();
     setting = new Settings();
+    ca = new CA(this);
     users = new Users(this);
 
     constructor(

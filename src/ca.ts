@@ -1,12 +1,15 @@
-import { Certificate, Identity, createCertificate, generatePrivateKey, identityFromDN, parseKey } from "sshpk";
-import { User } from "./gateway";
+import { Certificate, Identity, PrivateKey, createCertificate, generatePrivateKey, identityFromDN, parseKey, parsePrivateKey } from "sshpk";
+import { SSHGateway, User } from "./gateway";
 
 
 
 export class CA {
-    privateKey = generatePrivateKey("ed25519")
+    readonly privateKey: PrivateKey
 
-    constructor() {
+    constructor(gateway: SSHGateway) {
+        this.privateKey = parsePrivateKey(gateway.setting.getRaw("keys/ca.key", () => {
+            return generatePrivateKey("ed25519").toString("openssh");
+        }))
     }
 
     parseKey(buf: Buffer) {
