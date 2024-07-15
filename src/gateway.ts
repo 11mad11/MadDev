@@ -9,6 +9,7 @@ import { CA } from "./ca";
 import { Settings } from "./settings";
 import { Users } from "./user";
 import { TunService } from "./services/tun";
+import { CommandManager } from "./command";
 
 export interface User {
     username: string
@@ -41,14 +42,9 @@ export interface Service<U = void> {
     }): Promise<U>;
 }
 
-export abstract class Command {
-    abstract execute(this: SSHGateway, user: User, parts: string[], channel: ServerChannel): Promise<void> | void
-}
-
 export class SSHGateway {
 
     envMap = new WeakMap<Connection, Record<string, string>>();
-    commands = new Map<string, Command>();
 
     services = {
         1: new TCPService(),
@@ -67,19 +63,11 @@ export class SSHGateway {
     setting = new Settings();
     ca = new CA(this);
     users = new Users(this);
+    commands = new CommandManager(this);
 
     constructor(
     ) {
-        this.addCommand("otp", import("./commands/otp"));
-        this.addCommand("signsshkey", import("./commands/signsshkey"));
-        this.addCommand("sshca", import("./commands/sshca"));
-        this.addCommand("sshhelp", import("./commands/sshhelp"));
-    }
 
-    addCommand(name: string, cmd: Command | Promise<Command> | Promise<{ default: Command }>) {
-        Promise.resolve(cmd).then((cmd) => {
-            this.commands.set(name, "default" in cmd ? cmd.default : cmd);
-        });
     }
 
     listenOn(server: Server) {
@@ -143,13 +131,7 @@ export class SSHGateway {
         client.on("session", (a) => {
             const session = a();
             session.on("exec", (a, r, i) => {
-                const parts = i.command.split(" ");
-                const cmd = this.commands.get(parts[0]);
-
-                if (!cmd)
-                    return r();
-
-                cmd.execute.call(this, user, parts, a());
+                this.commands.exec(user, a(), i.command);
             })
         });
 
