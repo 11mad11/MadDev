@@ -85,6 +85,10 @@ export class SSHGateway {
     listenOn(server: Server) {
         server.on("connection", this.onConnection.bind(this));
 
+        server.on("error", (e) => {
+            console.error(e);
+        });
+
         (server as NetServer).on("close", () => {
 
         });
@@ -118,6 +122,9 @@ export class SSHGateway {
 
     async onConnection(client: Connection, info: ClientInfo) {
         try {
+            client.on("error", (e) => {
+                console.error(e);
+            })
             const username = await this.auth(client, info);
 
             const user: User = {
@@ -136,8 +143,6 @@ export class SSHGateway {
         client.on("session", (a) => {
             const session = a();
             session.on("exec", (a, r, i) => {
-                console.log(a, r, i);
-
                 const parts = i.command.split(" ");
                 const cmd = this.commands.get(parts[0]);
 
@@ -149,7 +154,6 @@ export class SSHGateway {
         });
 
         client.on('tcpip', (a, r, i) => {
-            console.log(i);
             if (!user.permission.canUseService(i.destPort, i.destIP))
                 return r();
             const result = this.services[i.destPort]?.use({
@@ -168,7 +172,6 @@ export class SSHGateway {
 
             switch (t) {
                 case "tcpip-forward":
-                    console.log(i);
                     if (!user.permission.canRegisterService(i.bindPort, i.bindAddr))
                         return r?.();
                     const result = this.services[i.bindPort]?.register({
