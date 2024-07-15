@@ -8,6 +8,7 @@ import { TCPService } from "./services/tcp";
 import { CA } from "./ca";
 import { Settings } from "./settings";
 import { Users } from "./user";
+import { TunService } from "./services/tun";
 
 export interface User {
     username: string
@@ -51,6 +52,7 @@ export class SSHGateway {
 
     services = {
         1: new TCPService(),
+        2: new TunService(),
         22: new SSHService(),
     } as const satisfies Record<number, Service<any>>;
 
