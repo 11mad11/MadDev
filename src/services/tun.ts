@@ -59,6 +59,17 @@ class Bridge {
         const tun = new TUN(username, channel, this);
     }
 
+    ipCnt = 1
+    ipMap = new Map<any, number>()
+    getSubnet(key: any) {
+        if (this.ipCnt === 256)
+            throw new Error("No ip left")
+        const ipNum = this.ipMap.get(key) ?? this.ipCnt++;
+        this.ipMap.set(key, ipNum);
+        const parts = this.subnet.split(".");
+        return [...parts.slice(0, 3), ipNum].join(".") + "/" + parts[3].split("/")[1]
+    }
+
 }
 
 class TUN {
