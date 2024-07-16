@@ -34,6 +34,7 @@ export class CommandManager {
         (await import("./commands/otp")).default(ctx);
         (await import("./commands/signsshkey")).default(ctx);
         (await import("./commands/tun")).default(ctx);
+        (await import("./commands/mad")).default(ctx);
 
 
         try {
