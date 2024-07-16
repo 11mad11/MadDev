@@ -1,5 +1,6 @@
 import { Connection, ClientInfo, AuthContext, PublicKey } from "ssh2";
 import { AuthProvider, SSHGateway } from "../gateway";
+import { Certificate, parseFingerprint } from "sshpk";
 
 export class PublicKeyAuthProvider implements AuthProvider {
     method = "publickey" as const;
@@ -17,22 +18,29 @@ export class PublicKeyAuthProvider implements AuthProvider {
         if (ctx.method !== "publickey")
             throw new Error("Method not publickey")
 
-        const key = this.gateway.ca.parseKey(ctx.key.data);
+        const cert = this.gateway.ca.parse(ctx.key.data);
 
-        if (this.gateway.ca.validate(key) && key.subjects[0] && key.subjects[0].uid === ctx.username)
+        if (cert instanceof Certificate && this.gateway.ca.validate(cert) && cert.subjects[0] && cert.subjects[0].uid === ctx.username)
             return;
 
         if (this.acceptNextMap.has(client)) {
             const [aInfo, aUsername] = this.acceptNextMap.get(client)!;
             if (aInfo === info && aUsername === ctx.username) {
-                this.known.set(aUsername, ctx.key);
+                const keys = this.gateway.users.getOrCreateUser(aUsername).publicKeys ??= [];
+                keys.push(this.gateway.ca.getKey(cert).fingerprint().toString());
+                this.gateway.users.usersConfig.save();
+                return;
             }
         }
 
-        if (this.known.has(ctx.username)) {
-            const key = this.known.get(ctx.username)!;
-            if (key.algo === ctx.key.algo && ctx.key.data.equals(key.data))
-                return;
+        const user = this.gateway.users.users[ctx.username];
+
+        if (user && user.publicKeys?.length) {
+            const key = this.gateway.ca.getKey(cert);
+            for (const pk of user.publicKeys) {
+                if (parseFingerprint(pk).matches(key))
+                    return
+            }
         }
 
         this.acceptNextAlreadyMap.set(client, [info, ctx.username, ctx.key]);
@@ -51,7 +59,9 @@ export class PublicKeyAuthProvider implements AuthProvider {
         if (this.acceptNextAlreadyMap.has(client)) {
             const [aInfo, aUsername, aKey] = this.acceptNextAlreadyMap.get(client)!;
             if (aInfo === info && aUsername === username) {
-                this.known.set(aUsername, aKey);
+                const keys = this.gateway.users.getOrCreateUser(aUsername).publicKeys ??= [];
+                keys.push(this.gateway.ca.getKey(aKey.data).fingerprint().toString());
+                this.gateway.users.usersConfig.save();
                 return false;
             }
         }

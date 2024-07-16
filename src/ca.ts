@@ -1,4 +1,4 @@
-import { Certificate, Identity, PrivateKey, createCertificate, generatePrivateKey, identityFromDN, parseKey, parsePrivateKey } from "sshpk";
+import { Certificate, Identity, Key, PrivateKey, createCertificate, generatePrivateKey, identityFromDN, parseKey, parsePrivateKey } from "sshpk";
 import { SSHGateway, User } from "./gateway";
 
 
@@ -12,7 +12,7 @@ export class CA {
         }))
     }
 
-    parseKey(buf: Buffer) {
+    parse(buf: Buffer) {
         let offset = 0;
 
         const algoLen = buf.readInt32BE(offset); offset += 4;
@@ -22,8 +22,18 @@ export class CA {
             case "ssh-rsa-cert-v01@openssh.com":
                 return Certificate.parse(algo + " " + buf.toString("base64"), "openssh");
             default:
-                throw new Error("Unknown algo: " + algo);
+                return parseKey(buf)
         }
+    }
+
+    getKey(key: Certificate | Key | Buffer): Key {
+        if (key instanceof Buffer)
+            key = this.parse(key);
+        if (key instanceof Certificate)
+            return key.subjectKey
+        if (key instanceof Key)
+            return key;
+        throw new Error();
     }
 
     validate(key: Certificate) {

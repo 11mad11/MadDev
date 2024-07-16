@@ -19,7 +19,7 @@ export class Users {
         }))
     }), () => ({ users: {} }));
 
-    get users(){
+    get users() {
         return this.usersConfig.data.users
     }
     roles = new Map<string | undefined, Partial<Permissions>>();
@@ -62,9 +62,16 @@ export class Users {
         }));
     }
 
-    setUser(username: string, perm: typeof this.users[string]) {
-        this.users[username] = perm;
+    setUser(username: string, user: typeof this.users[string]) {
+        this.users[username] = user;
         this.usersConfig.save();
+    }
+
+    getOrCreateUser(username: string) {
+        const user = this.users[username] ??= {
+            permissions: {}
+        }
+        return user;
     }
 
     removeUser(username: string) {
