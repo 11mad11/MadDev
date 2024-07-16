@@ -1,35 +1,20 @@
-import { readFileSync } from "fs";
-import { cmd } from "./_helper";
-import { input as inputO } from '@inquirer/prompts';
+import { cmd, getInquirerContext, inquirer } from "./_helper";
 import { readFile } from "fs/promises";
-import { ServerChannel } from "ssh2";
-import { Readable, Writable } from "stream";
 import { quote } from "shescape/stateless";
-
-function input(...args: Parameters<typeof inputO>): ReturnType<typeof inputO> {
-    const prompt = inputO(...args);
-    args[1]?.input?.on("close", () => {
-        prompt.cancel();
-    })
-    return prompt;
-}
 
 export default cmd(({ user, prog, channel }) => {
     const cmd = prog.command("mad").action(async () => {
-        const ctx = {
-            input: createProxy(channel, "in"),
-            output: createProxy(channel, "out")
-        };
-        const username = await input({
+        const ctx = getInquirerContext(channel);
+        const username = await inquirer.input({
             message: "Username",
             required: true,
             default: user.username
         }, ctx);
-        const ip = await input({
+        const ip = await inquirer.input({
             message: "Server Address",
             required: true
         }, ctx);
-        const port = await input({
+        const port = await inquirer.input({
             message: "Port",
             validate(value) {
                 return String(parseInt(value, 10)) == value || "Should be a number"
@@ -37,7 +22,7 @@ export default cmd(({ user, prog, channel }) => {
             default: "22",
             required: true
         }, ctx);
-        const key = await input({
+        const key = await inquirer.input({
             message: "Private key location",
             default: "~/.ssh/id_rsa",
             required: true
@@ -80,23 +65,3 @@ export default cmd(({ user, prog, channel }) => {
         channel.eof();
     })
 })
-
-
-function createProxy<T extends object>(obj: T, name: string): T {
-    return new Proxy(obj, {
-        get(target, property, receiver) {
-            if (property === "end")
-                return () => { }
-            if (property === "eof")
-                return () => { }
-            if (property === "close")
-                return () => { }
-            //console.log(`Property accessed: ${String(property)} on ${name}`);
-            return Reflect.get(target, property, receiver);
-        },
-        set(target, property, value, receiver) {
-            //console.log(`Property set: ${String(property)} = ${value}`);
-            return Reflect.set(target, property, value, receiver);
-        }
-    });
-}
