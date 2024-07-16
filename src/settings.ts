@@ -28,6 +28,7 @@ export class Settings {
         const path = join(this.baseDir, name);
         writeFileSync(path, value);
     }
+
     getJSON<S extends v.GenericSchema>(name: string, schema: S): v.InferOutput<S> | undefined;
     getJSON<S extends v.GenericSchema>(name: string, schema: S, def: () => v.InferOutput<S>): v.InferOutput<S>
     getJSON<S extends v.GenericSchema>(name: string, schema: S, def?: () => v.InferOutput<S>): v.InferOutput<S> | undefined {
@@ -43,6 +44,30 @@ export class Settings {
 
     setJSON(name: string, value: any) {
         this.setRaw(name, JSON.stringify(value, undefined, 2));
+    }
+
+    load<S extends v.GenericSchema>(name: string, schema: S, def: () => v.InferOutput<S>) {
+        const mapSave = new Map();
+        const mapLoad = new Map();
+        const setting = this;
+        const ctx = {
+            data: this.getJSON(name, schema, def),
+            onSave(cb: () => void) {
+                mapSave.set(cb, true);
+            },
+            onReload(cb: () => void) {
+                mapLoad.set(cb, true);
+            },
+            save() {
+                mapSave.forEach(([k, _]) => k());
+                setting.setJSON(name, ctx.data);
+            },
+            reload(){
+                ctx.data = this.getJSON(name, schema, def);
+                mapLoad.forEach(([k, _]) => k());
+            }
+        }
+        return ctx;
     }
 
 }

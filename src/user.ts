@@ -2,11 +2,6 @@ import * as v from 'valibot';
 import { SSHGateway } from "./gateway";
 import { Permissions } from "./permission";
 
-type Perm = {
-    role?: string,
-    permissions: Partial<MappedPerm>
-};
-
 type MappedPerm = {
     [key in keyof Permissions]: MapType<Parameters<Permissions[key]>, ReturnType<Permissions[key]>>
 }
@@ -15,13 +10,23 @@ type MapType<P extends any[], R> = P extends [infer K, ...infer L] ? Record<stri
 
 export class Users {
 
-    users: Record<string, Perm> = {};
+    usersConfig = this.gateway.setting.load("users.json", v.object({
+        users: v.record(v.string(), v.strictObject({
+            permissions: v.partial(v.strictObject(Permissions.schema)),
+            role: v.optional(v.string()),
+            password: v.optional(v.string()),
+            publicKeys: v.optional(v.array(v.string()))
+        }))
+    }), () => ({ users: {} }));
+
+    get users(){
+        return this.usersConfig.data.users
+    }
     roles = new Map<string | undefined, Partial<Permissions>>();
 
     constructor(
         public gateway: SSHGateway
     ) {
-        this.reload()
     }
 
     resolvePermission(username: string): Partial<Permissions> | undefined {
@@ -57,14 +62,14 @@ export class Users {
         }));
     }
 
-    setUser(username: string, perm: Perm) {
+    setUser(username: string, perm: typeof this.users[string]) {
         this.users[username] = perm;
-        this.save();
+        this.usersConfig.save();
     }
 
     removeUser(username: string) {
         delete this.users[username];
-        this.save();
+        this.usersConfig.save();
     }
 
     setRole(role: string, perm: Partial<Permissions>) {
@@ -73,23 +78,6 @@ export class Users {
 
     removeRole(role: string) {
         this.roles.delete(role);
-    }
-
-    save() {
-        this.gateway.setting.setJSON("users.json", { users: this.users });
-    }
-
-    reload() {
-
-        const users = this.gateway.setting.getJSON("users.json", v.object({
-            users: v.record(v.string(), v.strictObject({
-                permissions: v.partial(v.strictObject(Permissions.schema)),
-                role: v.optional(v.string())
-            }))
-        }), () => {
-            return { users: {} };
-        });
-        this.users = users.users;
     }
 
 }
