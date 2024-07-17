@@ -1,12 +1,12 @@
-import { timingSafeEqual } from "crypto";
 import { Connection, ClientInfo, AuthContext } from "ssh2";
 import { AuthProvider, SSHGateway, User } from "../gateway";
+import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 
 export class PasswordAuthProvider implements AuthProvider {
 
     method = "password" as const
 
-    private users = new Map<string, { pass: Buffer, cb?: (client: Connection, info: ClientInfo, ctx: AuthContext) => void }>();
+    private otps = new Map<string, Buffer>();
     //private expired = new Set<string>();
 
     constructor(public gateway: SSHGateway) { }
@@ -15,37 +15,36 @@ export class PasswordAuthProvider implements AuthProvider {
         if (ctx.method !== "password")
             throw new Error("Method not password")
 
-        const pass = this.users.get(ctx.username);
-        if (!pass)
+        const user = this.gateway.users.users[ctx.username];
+        if (user && user.password) {
+            const salt = user.password.slice(64);
+            const originalPassHash = user.password.slice(0, 64);
+            const currentPassHash = this.encryptPassword(ctx.password, salt);
+            if (originalPassHash === currentPassHash) //No need for timingSafeEqual since we are comparing hashes
+                return;
+        }
+
+        const otp = this.otps.get(ctx.username);
+        if (!otp)
             throw new Error("No User found")
-
-        if (!checkValue(Buffer.from(ctx.password), pass.pass))
+        if (!checkValue(Buffer.from(ctx.password), otp))
             throw new Error("Bad password")
-
-        /*if (this.expired.has(ctx.username)) {
-            ctx.requestChange("Change password:", (password) => {
-                pass.pass = Buffer.from(password);
-                this.expired.delete(ctx.username);
-            });
-        }*/
-
-        pass.cb?.(client, info, ctx);
+        this.otps.delete(ctx.username);
+        if (this.gateway.authsProvider.publickey.acceptNext(client, info, ctx.username))
+            ctx.reject(["publickey"], true);
     }
 
-    setUser(username: string, password: string) {
-        this.users.set(username, { pass: Buffer.from(password) });
+    encryptPassword(password: string, salt: string = randomBytes(16).toString('hex')) {
+        return scryptSync(password, salt, 32).toString('hex');
+    }
+
+    setPassword(username: string, password: string) {
+        this.gateway.users.getOrCreateUser(username).password = this.encryptPassword(password);
     }
 
     setOTPUser(username: string): string {
         const otp = createNumericalChain(6);
-        this.users.set(username, {
-            pass: Buffer.from(otp),
-            cb: (client, info, ctx) => {
-                this.users.delete(username);
-                if (this.gateway.authsProvider.publickey.acceptNext(client, info, ctx.username))
-                    ctx.reject(["publickey"], true);
-            }
-        });
+        this.otps.set(username, Buffer.from(otp));
         return otp;
     }
 }
