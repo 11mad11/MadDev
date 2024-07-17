@@ -10,6 +10,7 @@ import { Settings } from "./settings";
 import { Users } from "./user";
 import { TunService } from "./services/tun";
 import { CommandManager } from "./command";
+import { NoneAuthProvider } from "./auth/none";
 
 export interface User {
     username: string
@@ -55,7 +56,7 @@ export class SSHGateway {
     authsProvider = {
         password: new PasswordAuthProvider(this),
         publickey: new PublicKeyAuthProvider(this),
-        none: null,
+        none: new NoneAuthProvider(this),
         "keyboard-interactive": null,
         hostbased: null
     } as const satisfies Record<AuthContext["method"], AuthProvider | null>;

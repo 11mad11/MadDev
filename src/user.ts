@@ -15,7 +15,8 @@ export class Users {
             permissions: v.partial(v.strictObject(Permissions.schema)),
             role: v.optional(v.string()),
             password: v.optional(v.string()),
-            publicKeys: v.optional(v.array(v.string()))
+            publicKeys: v.optional(v.array(v.string())),
+            none: v.optional(v.boolean())
         }))
     }), () => ({ users: {} }));
 

@@ -30,7 +30,7 @@ export default cmd(({ user, prog, channel }) => {
 
         channel.write("Enter these command to download the utility script:\n");
         {
-            channel.write(`ssh default@${ip}`)
+            channel.write(`ssh none@${ip}`)
             if (port != "22")
                 channel.write(` -p ${port}`)
             channel.write(` mad download ${key} ${ip} ${port} ${username}`);
