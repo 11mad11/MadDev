@@ -13,9 +13,22 @@ export function getInquirerContext(channel: ServerChannel) {
     }
 }
 
+type InquirerCtx = Parameters<typeof inquirerO.input>[1];
+
+const selectFixed = fix(inquirerO.select);
+type SelectConfig = Omit<Parameters<typeof inquirerO.select>[0],"choices"> & { choices: (Parameters<typeof inquirerO.select>[0]["choices"][number] & { action?: () => Promise<void> })[] }
 export const inquirer = {
     input: fix(inquirerO.input),
-    select: fix(inquirerO.select),
+    select: async (config: SelectConfig, ctx?: InquirerCtx) => {
+        const rep = await selectFixed(config, ctx);
+        for (const c of config.choices) {
+            if ("value" in c && c.value == rep) {
+                await c?.action();
+                break;
+            }
+        }
+        return rep;
+    },
     checkbox: fix(inquirerO.checkbox),
     confirm: fix(inquirerO.confirm),
     editor: fix(inquirerO.editor),
