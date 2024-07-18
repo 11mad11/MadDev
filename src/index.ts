@@ -18,6 +18,9 @@ gateway.users.setRole("admin", {
     canUseService(type, name) {
         return true;
     },
+    canDeleteUser() {
+        return true;
+    },
 })
 
 const passAuth = gateway.authsProvider.password;
