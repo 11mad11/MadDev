@@ -2,12 +2,24 @@
 
 # === Config ===
 
-ssh_server=
-ssh_user=
-ssh_ip=
-ssh_port=
-key=
+CONFIG_FILE="${HOME}/.mad/configuration.cfg"
 
+if [ "$1" == "config" ]; then
+    CONFIG_DIR=$(dirname "$CONFIG_FILE")
+    mkdir -p "$CONFIG_DIR"
+
+    ssh none@${2} -p ${3:-22} mad config ${2} ${3-22} | tee >(sed -n $'/\f/,$p' | sed '1d' > $CONFIG_FILE)
+    exit 0
+fi
+
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+else
+    echo "Configuration file not found: $CONFIG_FILE"
+    exit 1
+fi
+
+ssh_server="${ssh_user}@${ssh_ip} -p ${ssh_port}"
 control_path="${HOME}/.ssh/control-${ssh_user}@${ssh_ip}:${ssh_port}"
 SCRIPT=$(realpath "$0")
 
@@ -52,14 +64,15 @@ case $1 in
     update)
         ssh -S ${control_path} ${ssh_server} mad download ${key} ${ssh_ip} ${ssh_port} ${ssh_user} | tee /tmp/newmad.sh > /dev/null
         {
-            rm ${SCRIPT}
-            mv /tmp/newmad.sh ${SCRIPT}
-            chmod +x ${SCRIPT}
+            sudo rm ${SCRIPT}
+            sudo mv /tmp/newmad.sh ${SCRIPT}
+            sudo chmod +x ${SCRIPT}
             echo "Updated!"
         }
         ;;
     sign)
-        echo $(ssh -S ${control_path} ${ssh_server} signsshkey < "${key}.pub") > "${key}-cert.pub"
+        key_expended=${key/#\~/$HOME}
+        echo $(ssh -S ${control_path} ${ssh_server} signsshkey < "${key_expended}.pub") > "${key_expended}-cert.pub"
         echo "Signed!"
         ;;
     ssh)
@@ -82,7 +95,7 @@ case $1 in
         sudo socat TUN:${subnet},iff-no-pi,up,tun-type=tap EXEC:\'"ssh -S ${control_path} ${ssh_server} tun open ${2}"\'
         ;;
     *)
-        echo "Invalid option. Usage: $0 {sign|tun}"
+        echo "Invalid option. See readme"
         exit 1
         ;;
 esac
