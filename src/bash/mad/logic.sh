@@ -44,6 +44,13 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
+terminal_settings=$(stty -g)
+restore_terminal() {
+    stty $terminal_settings
+}
+stty -echo -icanon time 0 min 1
+trap restore_terminal EXIT
+
 #set -x
 set -e
 
@@ -80,6 +87,9 @@ case $1 in
     tun)
         subnet=$(ssh_cmd tun getSubnet ${2})
         sudo socat TUN:${subnet},iff-no-pi,up,tun-type=tap EXEC:\'"$(ssh_string tun open ${2})"\'
+        ;;
+    admin)
+        ssh_cmd admin
         ;;
     *)
         echo "Invalid option. See readme"

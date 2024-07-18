@@ -35,7 +35,7 @@ export class CommandManager {
         (await import("./commands/signsshkey")).default(ctx);
         (await import("./commands/tun")).default(ctx);
         (await import("./commands/mad")).default(ctx);
-
+        (await import("./commands/admin")).default(ctx);
 
         try {
             await prog.parseAsync(command.split(" "), { from: 'user' })
