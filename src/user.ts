@@ -13,7 +13,7 @@ export class Users {
     usersConfig = this.gateway.setting.load("users.json", v.object({
         users: v.record(v.string(), v.strictObject({
             permissions: v.partial(v.strictObject(Permissions.schema)),
-            role: v.optional(v.string()),
+            roles: v.optional(v.array(v.string())),
             password: v.optional(v.string()),
             publicKeys: v.optional(v.array(v.string())),
             none: v.optional(v.boolean())
@@ -35,7 +35,7 @@ export class Users {
         if (!user)
             return Permissions.default;
 
-        const role = this.roles.get(user.role);
+        const roles = user.roles.map(role => this.roles.get(role));
 
         function check<K extends keyof Permissions>(n: K, vals: Parameters<Permissions[K]>) {
             let cur: any = user?.permissions[n];
@@ -52,10 +52,13 @@ export class Users {
             if (cur !== undefined)
                 return cur;
 
-            if (role && n in role)
-                return role[n]?.call(undefined, ...vals);
+            let roleResult = false;
+            for (const role of roles) {
+                if (role && n in role)
+                    roleResult ||= role[n]?.call(undefined, ...vals);
+            }
 
-            return Permissions.default[n].call(undefined, ...vals);
+            return roleResult || Permissions.default[n].call(undefined, ...vals);
         }
 
         return Object.fromEntries(Object.keys(Permissions.default).map(k => {
