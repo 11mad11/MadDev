@@ -36,6 +36,7 @@ export class CommandManager {
         (await import("./commands/tun")).default(ctx);
         (await import("./commands/mad")).default(ctx);
         (await import("./commands/admin")).default(ctx);
+        (await import("./commands/readme")).default(ctx);
 
         try {
             await prog.parseAsync(command.split(" "), { from: 'user' })

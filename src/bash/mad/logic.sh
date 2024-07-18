@@ -91,6 +91,9 @@ case $1 in
     admin)
         ssh_cmd admin
         ;;
+    readme)
+        ssh_cmd readme
+        ;;
     *)
         echo "Invalid option. See readme"
         exit 1
