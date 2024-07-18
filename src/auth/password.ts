@@ -6,7 +6,7 @@ export class PasswordAuthProvider implements AuthProvider {
 
     method = "password" as const
 
-    private otps = new Map<string, Buffer>();
+    private otps = new Map<string, [Buffer,boolean]>();
     //private expired = new Set<string>();
 
     constructor(public gateway: SSHGateway) { }
@@ -27,10 +27,10 @@ export class PasswordAuthProvider implements AuthProvider {
         const otp = this.otps.get(ctx.username);
         if (!otp)
             throw new Error("No User found")
-        if (!checkValue(Buffer.from(ctx.password), otp))
+        if (!checkValue(Buffer.from(ctx.password), otp[0]))
             throw new Error("Bad password")
         this.otps.delete(ctx.username);
-        if (this.gateway.authsProvider.publickey.acceptNext(client, info, ctx.username))
+        if (otp[1] && this.gateway.authsProvider.publickey.acceptNext(client, info, ctx.username))
             ctx.reject(["publickey"], true);
     }
 
@@ -42,9 +42,9 @@ export class PasswordAuthProvider implements AuthProvider {
         this.gateway.users.getOrCreateUser(username).password = this.encryptPassword(password);
     }
 
-    setOTPUser(username: string): string {
+    setOTPUser(username: string,register: boolean = false): string {
         const otp = createNumericalChain(6);
-        this.otps.set(username, Buffer.from(otp));
+        this.otps.set(username, [Buffer.from(otp),register]);
         return otp;
     }
 }
