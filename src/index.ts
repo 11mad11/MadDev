@@ -21,6 +21,9 @@ gateway.users.setRole("admin", {
     canDeleteUser() {
         return true;
     },
+    canChangeRole() {
+        return true;
+    },
 })
 
 const passAuth = gateway.authsProvider.password;
