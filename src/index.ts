@@ -1,8 +1,6 @@
 import { Server } from "ssh2";
 import { generateKeyPairSync } from 'crypto';
 import { SSHGateway } from "./gateway";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { Permissions } from "./permission";
 
 const gateway = new SSHGateway();
 
@@ -34,8 +32,8 @@ gateway.users.setRole("admin", {
         permissions: {},
         roles: ["admin"]
     })
-const passAuth = gateway.authsProvider.password;
-console.log(passAuth.setOTPUser("otp"));
+    const passAuth = gateway.authsProvider.password;
+    console.log(passAuth.setOTPUser("otp"));
 }
 
 const key = gateway.setting.getRaw("keys/host.key", () => {
@@ -50,7 +48,7 @@ const server = new Server({
 });
 gateway.listenOn(server);
 
-server.listen(2222, '127.0.0.1', function () {
+server.listen(2222, '0.0.0.0', function () {
     console.log('Listening on port ' + this.address().port);
 });
 
