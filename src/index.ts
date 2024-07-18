@@ -26,10 +26,14 @@ gateway.users.setRole("admin", {
     },
 })
 
+{
+    gateway.users.setUser("otp", {
+        permissions: {},
+        roles: ["admin"]
+    })
 const passAuth = gateway.authsProvider.password;
-passAuth.setUser("foo", 'bar');
-passAuth.setUser("mad", 'mad');
 console.log(passAuth.setOTPUser("otp"));
+}
 
 const key = gateway.setting.getRaw("keys/host.key", () => {
     let keys = generateKeyPairSync('ed25519', {
