@@ -21,7 +21,7 @@ export class CommandManager {
             user
         };
 
-        prog.exitOverride((err)=>{throw err});
+        prog.exitOverride((err) => { throw err });
         prog.configureOutput({
             writeErr(str) {
                 channel.stderr.write(str)
@@ -43,6 +43,7 @@ export class CommandManager {
             channel.end();
             channel.close();
         } catch (err) {
+            channel.stderr.write(err?.toString?.());
             channel.exit(err.exitCode ?? 1);
             channel.end();
             channel.close();
