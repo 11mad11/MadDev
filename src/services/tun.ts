@@ -4,6 +4,7 @@ import { utils } from "iproute";
 import { createServer } from "net";
 import { execFileSync, spawn } from "child_process";
 import { chmodSync, existsSync, unlinkSync } from "fs";
+import camelcase from "camelcase";
 
 utils.ipForwarding.v4.enable().then(r => console.log("ipforward", "good", r)).catch(r => console.log("ipforward", "bad", r))
 
@@ -36,15 +37,17 @@ export class TunService implements Service<TUN> {
 class Bridge {
 
     dev: string
+    ns: string
     proc: import("child_process").ChildProcessWithoutNullStreams;
 
     constructor(
         public readonly name: string,
         public readonly subnet: string
     ) {
-        this.dev = "br" + name;
+        this.dev = "br0";
+        this.ns = camelcase(["netns", name]);
         this.proc = spawn("./src/bash/setupBridge.sh", [
-            this.dev, ...subnet.split("/") //TODO sanatize
+            this.dev, this.ns //TODO sanitize
         ], {
             shell: true,
         });
@@ -113,7 +116,7 @@ class TUN {
         // Optional: Set permissions on the Unix socket file
         chmodSync(socketPath, '777'); // TODO adjust permissions
 
-        this.socat = spawn(`socat TUN,iff-no-pi,up,tun-type=tap,tun-name=${this.dev} UNIX-CONNECT:${socketPath}`, [], {
+        this.socat = spawn(`ip netns exec ${bridge.ns} socat TUN,iff-no-pi,up,tun-type=tap,tun-name=${this.dev} UNIX-CONNECT:${socketPath}`, [], {
             shell: true
         });
         this.socat.stderr.pipe(process.stderr);
@@ -123,7 +126,7 @@ class TUN {
         this.socat.on("exit", (c, s) => console.log(this.dev, c, s));
 
         setTimeout(() => {
-            execFileSync("ip", ["link", "set", this.dev, "master", bridge.dev])
+            execFileSync("ip", ["netns", "exec", bridge.ns, "ip", "link", "set", this.dev, "master", bridge.dev])
         }, 1000);
     }
 

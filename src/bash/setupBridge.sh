@@ -1,20 +1,23 @@
 #!/bin/bash
 set -e
-trap cleanup SIGINT SIGTERM
 
 iface_name="${1}"
-ip_address="${2}"
-netmask="${3}"
+namespace="${2}"
+#subnet="${3}"
+
+trap cleanup SIGINT SIGTERM
+
+if [ ! -f "/run/netns/${namespace}" ]; then
+    echo "Creating namesapce..."
+    ip netns add ${namespace}
+fi
 
 cleanup() {
     echo "Cleaning up..."
 
-    # Take down bridge if exists
-    if ip link show "$iface_name" &> /dev/null; then
-        echo "Taking down bridge $iface_name..."
-        ip link set name $iface_name down
-        ip link del $iface_name
-        echo "Bridge $iface_name taken down."
+    if [ -f "/run/netns/${namespace}" ]; then
+        echo "Deleting namesapce..."
+        ip netns delete ${namespace}
     fi
 
     echo "Cleanup complete."
@@ -23,20 +26,20 @@ cleanup() {
 setup_interface() {
 
     # Check if the bridge already exists
-    if ip link show "$iface_name" &> /dev/null
+    if ip netns exec ${namespace} ip link show "$iface_name" &> /dev/null
     then
         echo "Bridge $iface_name already exists. Taking it down..."
         cleanup
     fi
 
     echo "Creating and setting up bridge $iface_name..."
-    ip link add name $iface_name type bridge
-    ip link set dev $iface_name up
+    ip netns exec ${namespace} ip link add name $iface_name type bridge
+    ip netns exec ${namespace} ip link set dev $iface_name up
     echo "Bridge $iface_name created and activated."
 
     # Assign the IP address and netmask to the bridge
-    ip addr add $ip_address/$netmask dev $iface_name
-    echo "Assigned IP address $ip_address/$netmask to $iface_name."
+    #ip netns exec ${namespace} ip addr add $subnet dev $iface_name
+    #echo "Assigned IP address $subnet to $iface_name."
 }
 
 setup_interface
