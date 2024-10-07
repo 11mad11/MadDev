@@ -29,6 +29,10 @@ else
     echo "SSH master connection is already running."
 fi
 
+ssh_cmd_unique() {
+    ssh -S ${control_path} ${ssh_server} $@
+}
+
 ssh_cmd() {
     ssh -S ${control_path} ${ssh_server} $@
 }
@@ -74,11 +78,11 @@ case $1 in
         ;;
     use)
         echo "Ready"
-        ssh_cmd -L localhost:${3}:${2}:1 -N
+        ssh_cmd_unique -L localhost:${3}:${2}:1 -N
         ;;
     register)
         echo "Ready"
-        ssh_cmd -R ${2}:1:localhost:${3} -N
+        ssh_cmd_unique -R ${2}:1:localhost:${3} -N
         ;;
     sshd)
         echo "Ready"
