@@ -52,4 +52,7 @@ server.listen(2222, '0.0.0.0', function () {
     console.log('Listening on port ' + this.address().port);
 });
 
-
+process.on('SIGINT', function () {
+    console.log("\nGracefully shutting down from SIGINT (Ctrl-C)");
+    process.exit(0);
+});
