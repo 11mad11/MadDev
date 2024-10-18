@@ -1,4 +1,4 @@
-import { AcceptConnection, AuthContext, ClientInfo, Connection, Server, ServerChannel, TcpipBindInfo, TcpipRequestInfo } from "ssh2";
+import { AcceptConnection, AuthContext, ClientInfo, Connection, PseudoTtyInfo, Server, ServerChannel, TcpipBindInfo, TcpipRequestInfo } from "ssh2";
 import { Server as NetServer } from "net";
 import { Permissions } from "./permission";
 import { PasswordAuthProvider } from "./auth/password";
@@ -9,7 +9,7 @@ import { CA } from "./ca";
 import { Settings } from "./settings";
 import { Users } from "./user";
 import { TunService } from "./services/tun";
-import { CommandManager } from "./command";
+import { ShellManager } from "./shell";
 import { NoneAuthProvider } from "./auth/none";
 
 export interface User {
@@ -64,7 +64,7 @@ export class SSHGateway {
     setting = new Settings();
     ca = new CA(this);
     users = new Users(this);
-    commands = new CommandManager(this);
+    shell = new ShellManager(this);
 
     constructor(
     ) {
@@ -131,8 +131,22 @@ export class SSHGateway {
 
         client.on("session", (a) => {
             const session = a();
+            let pty: PseudoTtyInfo | false = false;
+
             session.on("exec", (a, r, i) => {
-                this.commands.exec(user, a(), i.command);
+                this.shell.exec(user, a(), i.command, pty);
+            });
+
+            session.on("pty", (a, r, i) => {
+                pty = i;
+                a();
+            });
+
+            session.on("shell", (a, r) => {
+                //if (pty) {
+                    this.shell.shell(user, a(), pty);
+                //} else
+                //    r();
             })
         });
 

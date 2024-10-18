@@ -1,11 +1,16 @@
-import { readFile } from "fs/promises";
-import { cmd } from "./_helper";
 import chalk from 'chalk';
+import { Cmd } from "../shell";
+import { createCommand } from "@commander-js/extra-typings";
 
-export default cmd(({ channel, user, prog, gateway }) => {
-    if (!user.permission.canGenerateOTP())
-        return;
-    const cmdHelp = prog.command("help").action(async () => {
+export default {
+    perm(ctx) {
+        return true;
+    },
+    cmd: ()=>createCommand("help").summary("Help"),
+    async pty(ctx) {
+        return [[], {}]
+    },
+    async run({ output }, opts) {
         h1("== All command needed to have fun ==");
 
         h2("Install instruction");
@@ -25,11 +30,6 @@ export default cmd(({ channel, user, prog, gateway }) => {
         h3("Client(s)");
         cmd("mad use " + chalk.white.underline("name") + " " + chalk.white.underline("local_port"));
 
-        h2("Admin Task");
-        cmd("mad admin");
-    });
-
-    cmdHelp.command("install").action(() => {
         h1("== Install ==");
         h2("Linux");
         cmd("ssh none@SERVER mad download | sudo tee /usr/bin/mad > /dev/null");
@@ -43,25 +43,25 @@ export default cmd(({ channel, user, prog, gateway }) => {
         cmd("nix-env -i -f mad.nix");
         line("The next step is to install it the way you prefer. (See nix documentation for more help)");
         cmd("mad sign");
-    })
 
-    function h1(txt: string) {
-        channel.write(chalk.bgWhite.underline.black(txt) + "\n");
-    }
+        function h1(txt: string) {
+            output.write(chalk.bgWhite.underline.black(txt) + "\n");
+        }
 
-    function h3(txt: string) {
-        channel.write(chalk.underline.italic(txt) + "\n");
-    }
+        function h3(txt: string) {
+            output.write(chalk.underline.italic(txt) + "\n");
+        }
 
-    function h2(txt: string) {
-        channel.write("\n" + chalk.underline.bold(txt) + "\n");
-    }
+        function h2(txt: string) {
+            output.write("\n" + chalk.underline.bold(txt) + "\n");
+        }
 
-    function line(txt: string = "", newline = true) {
-        channel.write(txt + (newline ? "\n" : " "));
-    }
+        function line(txt: string = "", newline = true) {
+            output.write(txt + (newline ? "\n" : " "));
+        }
 
-    function cmd(txt: string, newline = true) {
-        channel.write(chalk.yellow(txt) + (newline ? "\n" : " "));
-    }
-});
+        function cmd(txt: string, newline = true) {
+            output.write(chalk.yellow(txt) + (newline ? "\n" : " "));
+        }
+    },
+} satisfies Cmd

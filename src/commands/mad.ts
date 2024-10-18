@@ -1,4 +1,4 @@
-import { cmd, getInquirerContext, inquirer } from "./_helper";
+import { cmd, fixedInquirer, getInquirerContext } from "./_helper";
 import { readFile } from "fs/promises";
 import { quote } from "shescape/stateless";
 
@@ -37,17 +37,18 @@ export default cmd(({ user, prog, channel }) => {
 
     async function askConfig(defaultIp?: string, defaultPort?: string) {
         const ctx = getInquirerContext(channel);
+        const inquirer = fixedInquirer(ctx);
         const rep = {
             username: await inquirer.input({
                 message: "Username",
                 required: true,
                 default: user.username
-            }, ctx),
+            }),
             ip: await inquirer.input({
                 message: "Server Address",
                 required: true,
                 default: defaultIp
-            }, ctx),
+            }),
             port: await inquirer.input({
                 message: "Port",
                 validate(value) {
@@ -55,12 +56,12 @@ export default cmd(({ user, prog, channel }) => {
                 },
                 default: defaultPort ?? "22",
                 required: true
-            }, ctx),
+            }),
             key: await inquirer.input({
                 message: "Private key location",
                 default: "~/.ssh/id_rsa",
                 required: true
-            }, ctx)
+            })
         };
 
         let script = "";
