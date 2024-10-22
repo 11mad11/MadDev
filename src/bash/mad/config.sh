@@ -6,7 +6,7 @@ if [ "$1" == "config" ]; then
     CONFIG_DIR=$(dirname "$CONFIG_FILE")
     mkdir -p "$CONFIG_DIR"
 
-    ssh none@${2} -p ${3:-22} mad config ${2} ${3-22} | tee >(sed -n $'/\f/,$p' | sed '1d' > $CONFIG_FILE)
+    ssh none@${2} -p ${3:-22} -t mad-config ${2} ${3-22} | tee >(sed -n $'/\f/,$p' | sed '1d' > $CONFIG_FILE)
     exit 0
 fi
 
