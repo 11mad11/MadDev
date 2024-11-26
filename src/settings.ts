@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "fs"
-import { join } from "path"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
+import { dirname, join } from "path"
 import * as v from 'valibot';
 
 export class Settings {
@@ -15,6 +15,7 @@ export class Settings {
     getRaw(name: string, def?: () => string) {
         const path = join(this.baseDir, name);
         if (!existsSync(path)) {
+            mkdirSync(dirname(path), { recursive: true });
             const result = def?.();
             if (result)
                 writeFileSync(path, result);
@@ -62,7 +63,7 @@ export class Settings {
                 mapSave.forEach(([k, _]) => k());
                 setting.setJSON(name, ctx.data);
             },
-            reload(){
+            reload() {
                 ctx.data = this.getJSON(name, schema, def);
                 mapLoad.forEach(([k, _]) => k());
             }
