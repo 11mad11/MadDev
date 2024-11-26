@@ -24,7 +24,7 @@ export default cmdDef({
                 channel
             );
         } else {
-            channel.write((await readFile("./src/bash/mad/install.sh")).toString());
+            channel.write((await readFile("./src/bash/install.sh")).toString());
             await pipeline(
                 rs,
                 new Base64Encode(),
