@@ -1,6 +1,6 @@
 import { Server } from "ssh2";
-import { generateKeyPairSync } from 'crypto';
 import { SSHGateway } from "./gateway";
+import { generatePrivateKey } from "sshpk";
 
 const gateway = new SSHGateway();
 
@@ -40,9 +40,7 @@ gateway.users.setRole("admin", {
 }
 
 const key = gateway.setting.getRaw("keys/host.key", () => {
-    let keys = generateKeyPairSync('ed25519', {
-    });
-    return keys.privateKey.export().toString();
+    return generatePrivateKey("ed25519").toString("openssh");
 }).toString();
 
 const server = new Server({
