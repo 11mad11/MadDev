@@ -6,7 +6,12 @@ import { execFileSync, spawn } from "child_process";
 import { chmodSync, existsSync, unlinkSync } from "fs";
 import camelcase from "camelcase";
 
-utils.ipForwarding.v4.enable().then(r => console.log("ipforward", "good", r)).catch(r => console.log("ipforward", "bad", r))
+utils.ipForwarding.v4.status().then(s=>{
+    if(s!=="1")
+        utils.ipForwarding.v4.enable()
+    .then(()=>console.log("net.ipv4.ip_forward = 1"))
+    .catch(()=>console.log("You need to set net.ipv4.ip_forward = 1. See https://linuxconfig.org/how-to-turn-on-off-ip-forwarding-in-linux"));
+});
 
 export class TunService implements Service<TUN> {
     services = new Map<string, Bridge>();
