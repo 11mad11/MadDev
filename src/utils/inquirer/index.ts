@@ -85,7 +85,7 @@ const Tree: <V>(config: {
 type InquirerCtx = Parameters<typeof inquirerO.input>[1];
 export type FixedInquirer = ReturnType<typeof fixedInquirer>;
 
-type SelectConfig<V> = Omit<Parameters<typeof inquirerO.select<V>>[0], "choices"> & { choices: (Parameters<typeof inquirerO.select>[0]["choices"][number] & { action?: () => Promise<void> })[] }
+type SelectConfig<V> = Omit<Parameters<typeof inquirerO.select<V>>[0], "choices"> & { choices: (Parameters<typeof inquirerO.select<V>>[0]["choices"][number] & { action?: () => Promise<void> })[] }
 export function fixedInquirer(ctx: InquirerCtx) {
     const selectFixed = fix(inquirerO.select, ctx);
     return {
