@@ -1,16 +1,19 @@
 import chalk from 'chalk';
 import { Cmd } from "../shell";
 import { createCommand } from "@commander-js/extra-typings";
+import { prettyTerm } from '../utils/term';
 
 export default {
     perm(ctx) {
         return true;
     },
-    cmd: ()=>createCommand("help").summary("Help"),
+    cmd: () => createCommand("help").summary("Help"),
     async pty(ctx) {
         return [[], {}]
     },
-    async run({ output }, opts) {
+    async run({ output,channel }, opts) {
+        const { cmd, h1, h2, h3, line } = prettyTerm(output);
+
         h1("== All command needed to have fun ==");
 
         h2("Install instruction");
@@ -43,25 +46,5 @@ export default {
         cmd("nix-env -i -f mad.nix");
         line("The next step is to install it the way you prefer. (See nix documentation for more help)");
         cmd("mad sign");
-
-        function h1(txt: string) {
-            output.write(chalk.bgWhite.underline.black(txt) + "\n");
-        }
-
-        function h3(txt: string) {
-            output.write(chalk.underline.italic(txt) + "\n");
-        }
-
-        function h2(txt: string) {
-            output.write("\n" + chalk.underline.bold(txt) + "\n");
-        }
-
-        function line(txt: string = "", newline = true) {
-            output.write(txt + (newline ? "\n" : " "));
-        }
-
-        function cmd(txt: string, newline = true) {
-            output.write(chalk.yellow(txt) + (newline ? "\n" : " "));
-        }
     },
 } satisfies Cmd
