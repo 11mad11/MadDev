@@ -1,7 +1,7 @@
 import { MenuNodeParent } from "../shell";
 import admin from "./admin";
 import help from "./help";
-import mad from "./mad";
+import install from "./install";
 import signsshkey from "./signsshkey";
 import tun from "./tun";
 
@@ -12,6 +12,6 @@ export default {
         admin,
         signsshkey,
         ...tun,
-        mad
+        install
     ]
 } satisfies MenuNodeParent
