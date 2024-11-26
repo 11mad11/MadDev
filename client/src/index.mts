@@ -2,11 +2,11 @@ import { program } from "@commander-js/extra-typings";
 import { input } from '@inquirer/prompts';
 import { mergician } from 'mergician';
 import chalk from "chalk";
-import { closeSync, createWriteStream, fdatasyncSync, openSync, readFileSync, writeFileSync, writeSync, writevSync } from "fs";
+import { closeSync, fdatasyncSync, readFileSync, writeFileSync, writeSync} from "fs";
 import { NodeSSH } from "node-ssh"
 import { userInfo } from "os";
 import tmp from "tmp";
-import type { Duplex, Readable } from "stream";
+import type { Readable } from "stream";
 import { execSync } from "child_process";
 
 tmp.setGracefulCleanup();
@@ -128,11 +128,38 @@ program.command("update").action(async () => {
     });
 
     ssh.dispose();
-})
+});
+
+
+program.command("i").action(async () => {
+    const ssh = await connect();
+    const sh = await ssh.requestShell();
+
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+
+    const resizeTerminal = () => {
+        const { rows, columns } = process.stdout;
+        sh.setWindow(rows, columns, rows, columns);
+    };
+    resizeTerminal();
+    process.stdout.on('resize', resizeTerminal);
+
+    sh.stdout.pipe(process.stdout);
+    process.stdin.pipe(sh.stdin);
+
+    const cleanUp = () => {
+        process.stdin.setRawMode(false);
+        process.stdin.pause();
+        ssh.dispose();
+    };
+    process.on('SIGINT', cleanUp);
+    sh.on('close', cleanUp);
+});
 
 program.command("test").action(async () => {
     console.log("b");
-})
+});
 
 program.hook("preAction", (_t, a) => {
     const cmd_name = (a as any)._name;
