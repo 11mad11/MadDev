@@ -25,6 +25,9 @@ gateway.users.setRole("admin", {
     canChangeAuth() {
         return true;
     },
+    canUpdateServer() {
+        return true;
+    },
 })
 
 {

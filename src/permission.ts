@@ -7,6 +7,7 @@ export interface Permissions {
     canDeleteUser(): boolean
     canChangeRole(): boolean
     canChangeAuth(): boolean
+    canUpdateServer(): boolean
 }
 
 export const Permissions = {
@@ -15,8 +16,9 @@ export const Permissions = {
         canUseService: () => false,
         canGenerateOTP: () => false,
         canDeleteUser: () => false,
-        canChangeRole: ()=> false,
-        canChangeAuth: ()=> false
+        canChangeRole: () => false,
+        canChangeAuth: () => false,
+        canUpdateServer: () => false
     } satisfies Permissions,
     withDefault: (perm: Partial<Permissions> | undefined): Permissions => ({ ...Permissions.default, ...(perm ?? {}) }),
     schema: {
@@ -25,6 +27,7 @@ export const Permissions = {
         canGenerateOTP: v.boolean(),
         canDeleteUser: v.boolean(),
         canChangeRole: v.boolean(),
-        canChangeAuth: v.boolean()
+        canChangeAuth: v.boolean(),
+        canUpdateServer: v.boolean()
     } satisfies { [k in keyof Permissions] }
 }

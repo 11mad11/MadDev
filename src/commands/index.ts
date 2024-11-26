@@ -4,6 +4,7 @@ import help from "./help";
 import install from "./install";
 import signsshkey from "./signsshkey";
 import tun from "./tun";
+import update from "./update";
 
 export default {
     text: "Menu",
@@ -12,6 +13,7 @@ export default {
         admin,
         signsshkey,
         ...tun,
-        install
+        install,
+        update
     ]
 } satisfies MenuNodeParent
