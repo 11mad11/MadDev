@@ -35,7 +35,7 @@ export class Users {
         if (!user)
             return Permissions.default;
 
-        const roles = user.roles.map(role => this.roles.get(role));
+        const roles = user.roles?.map(role => this.roles.get(role)) ?? [];
 
         function check<K extends keyof Permissions>(n: K, vals: Parameters<Permissions[K]>) {
             let cur: any = user?.permissions[n];
