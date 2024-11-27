@@ -4,7 +4,7 @@ import { mergician } from 'mergician';
 import chalk from "chalk";
 import { closeSync, fdatasyncSync, readFileSync, writeFileSync, writeSync} from "fs";
 import { NodeSSH } from "node-ssh"
-import { userInfo } from "os";
+import { homedir, userInfo } from "os";
 import tmp from "tmp";
 import type { Readable } from "stream";
 import { execSync } from "child_process";
@@ -12,8 +12,8 @@ import { execSync } from "child_process";
 tmp.setGracefulCleanup();
 
 const APP_NAME = `mad`;
-const CONFIG_FILE = `${process.env["HOME"]}/.mad/configuration.cfg`;
-const SSH_KEY_FILE = `${process.env["HOME"]}/.ssh/id_rsa`;
+const CONFIG_FILE = `${homedir()}/.mad/configuration.cfg`;
+const SSH_KEY_FILE = `${homedir()}/.ssh/id_rsa`;
 
 let config = {
     host: undefined as string | undefined,
