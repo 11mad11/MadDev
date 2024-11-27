@@ -2,7 +2,7 @@ import { program } from "@commander-js/extra-typings";
 import { input } from '@inquirer/prompts';
 import { mergician } from 'mergician';
 import chalk from "chalk";
-import { closeSync, fdatasyncSync, readFileSync, writeFileSync, writeSync} from "fs";
+import { closeSync, fdatasyncSync, readFileSync, writeFileSync, writeSync } from "fs";
 import { NodeSSH } from "node-ssh"
 import { homedir, userInfo } from "os";
 import tmp from "tmp";
@@ -21,7 +21,7 @@ let config = {
     user: userInfo().username
 };
 
-async function connect(overwrite?: any) {
+async function connect(overwrite?: Parameters<NodeSSH["connect"]>[0]) {
     const ssh = new NodeSSH();
     await ssh.connect({
         host: config.host,
@@ -131,8 +131,8 @@ program.command("update").action(async () => {
 });
 
 
-program.command("i").action(async () => {
-    const ssh = await connect();
+program.command("i").option("--otp <otp>", "Login with the OTP user").action(async (o) => {
+    const ssh = await connect(o.otp ? { username: "otp", password: o.otp } : {});
     const sh = await ssh.requestShell();
 
     process.stdin.setRawMode(true);
