@@ -27,7 +27,7 @@ jobs:
         run: npm run build:client
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: mad
           path: build/*
@@ -37,8 +37,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
+          name: mad
           path: build
 
       - name: Create GitHub Release
@@ -46,5 +47,4 @@ jobs:
         with:
           files: |
             build/mad-linux
-        env:
-          CUSTOM_GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+          token: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
