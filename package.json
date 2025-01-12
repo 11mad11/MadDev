@@ -7,7 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "npx tsx src/index.ts",
     "build:client": "bun build --compile --minify --sourcemap ./client/src/index.mts --outfile ./build/mad-linux",
-    "release": "release-it"
+    "release": "release-it",
+    "postinstall": "patch-package && npm run build:client"
   },
   "release-it": {
     "$schema": "https://unpkg.com/release-it@17/schema/release-it.json",
@@ -50,6 +51,7 @@
     "@types/ssh2": "^1.15.0",
     "@types/sshpk": "^1.17.4",
     "@types/tmp": "^0.2.6",
+    "patch-package": "^8.0.0",
     "release-it": "^17.10.0",
     "tsx": "4.19.2"
   }
