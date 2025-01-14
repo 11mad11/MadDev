@@ -1,6 +1,7 @@
 import { Server } from "ssh2";
 import { SSHGateway } from "./gateway";
 import { generatePrivateKey } from "sshpk";
+import "./utils/NetNS";
 
 const gateway = new SSHGateway();
 
