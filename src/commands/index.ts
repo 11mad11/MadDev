@@ -1,5 +1,6 @@
 import { MenuNodeParent } from "../shell";
 import admin from "./admin";
+import buildClient from "./buildClient";
 import help from "./help";
 import install from "./install";
 import signsshkey from "./signsshkey";
@@ -14,6 +15,7 @@ export default {
         signsshkey,
         ...tun,
         install,
-        update
+        update,
+        buildClient
     ]
 } satisfies MenuNodeParent

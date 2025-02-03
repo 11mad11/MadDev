@@ -1,6 +1,5 @@
 import { createCommand } from "@commander-js/extra-typings";
 import { cmdDef } from "../shell";
-import { GitResponseError, PullFailedResult, simpleGit } from "simple-git";
 import { execSync } from "child_process";
 
 
