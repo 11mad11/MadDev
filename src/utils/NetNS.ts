@@ -1,8 +1,5 @@
 import { openSync, readlinkSync } from "fs";
 import ffi from "../ffi";
-import { restorePointer } from "ffi-rs";
-import { RtNetlinkSocket, createNl80211, createRtNetlink, rt } from "netlink";
-import { nextTick } from "process";
 import { NetLink } from "../../native";
 
 export class NetNS<C = void> {
@@ -35,28 +32,3 @@ export class NetNS<C = void> {
 }
 
 const originalNetFd = NetNS.openCurrentNS();
-
-const ns = new NetNS(() => {
-    return {
-        netlink: new NetLink()
-    }
-});
-
-new NetLink().dumpLinks().then((v)=>console.log(v,"ori"))
-
-NetNS.debugCurrentNS();
-ns.runWithNS(() => {
-    NetNS.debugCurrentNS();
-});
-
-(async ()=>{
-    await ns.ctx.netlink.dumpLinks().then((v)=>console.log(v,"ns"));
-    const bridge = await ns.ctx.netlink.createBridge("br0lololo");
-    await bridge.up();
-    await ns.ctx.netlink.dumpLinks().then((v)=>console.log(v,"ns"));
-})();
-
-setTimeout(() => {
-    process.exit(0);
-}, 10000);
-//process.exit(0);
