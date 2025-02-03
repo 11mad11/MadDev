@@ -5,7 +5,7 @@
   "main": "src/index.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "npx tsx src/index.ts",
+    "start": "npx tsx watch src/index.ts",
     "build:client": "bun build --compile --minify --sourcemap ./client/src/index.mts --outfile ./build/mad-linux",
     "release": "release-it",
     "postinstall": "patch-package",
