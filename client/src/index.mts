@@ -6,8 +6,29 @@ import { closeSync, fdatasyncSync, readFileSync, writeFileSync, writeSync } from
 import { NodeSSH } from "node-ssh"
 import { homedir, userInfo } from "os";
 import tmp from "tmp";
-import type { Readable } from "stream";
+import type { Duplex, Readable } from "stream";
 import { execSync } from "child_process";
+import { createConnection, Server } from "net";
+
+function pipeRaw(a: Duplex, b: Duplex) {
+    a.on("data", (chunk) => b.write(chunk));
+    b.on("data", (chunk) => a.write(chunk));
+
+    a.on("end", () => b.end());
+    b.on("end", () => a.end());
+
+    const onError = (err: Error) => {
+        console.error(err);
+        a.destroy(err);
+        b.destroy(err);
+    };
+
+    a.once("error", onError);
+    b.once("error", onError);
+
+    a.on("close", () => b.destroy());
+    b.on("close", () => a.destroy());
+}
 
 tmp.setGracefulCleanup();
 
@@ -40,8 +61,7 @@ async function connect(overwrite?: Parameters<NodeSSH["connect"]>[0]) {
     return ssh;
 }
 
-const setup_cmd = program.command("setup");
-setup_cmd.action(async () => {
+program.command("setup").action(async () => {
     console.log("\n" + chalk.bgWhite.underline.black("  Welcome!  ") + "\n");
 
     config.host = await input({
@@ -85,7 +105,6 @@ setup_cmd.action(async () => {
     console.log(`Enter this command for getting started: ${chalk.yellow(APP_NAME + " help")}`);
 });
 
-
 program.command("update").action(async () => {
     /*
     ssh_cmd mad download ${key} ${ssh_ip} ${ssh_port} ${ssh_user} | tee /tmp/newmad.sh > /dev/null
@@ -114,7 +133,7 @@ program.command("update").action(async () => {
             });
 
             let pos = 0;
-            (channel as Readable).on('data', (chunk: Buffer) => {
+            (channel as Readable).on('data', (chunk) => {
                 pos += writeSync(scriptFile.fd, chunk, 0, chunk.length, pos)
             });
 
@@ -130,32 +149,99 @@ program.command("update").action(async () => {
     ssh.dispose();
 });
 
+program.command("i")
+    .option("--otp <otp>", "Login with the OTP user")
+    .action(async (o) => {
+        const ssh = await connect(o.otp ? { username: "otp", password: o.otp } : {});
+        const sh = await ssh.requestShell();
 
-program.command("i").option("--otp <otp>", "Login with the OTP user").action(async (o) => {
-    const ssh = await connect(o.otp ? { username: "otp", password: o.otp } : {});
-    const sh = await ssh.requestShell();
+        process.stdin.setRawMode(true);
+        process.stdin.resume();
 
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
+        const resizeTerminal = () => {
+            const { rows, columns } = process.stdout;
+            sh.setWindow(rows, columns, rows, columns);
+        };
+        resizeTerminal();
+        process.stdout.on('resize', resizeTerminal);
 
-    const resizeTerminal = () => {
-        const { rows, columns } = process.stdout;
-        sh.setWindow(rows, columns, rows, columns);
-    };
-    resizeTerminal();
-    process.stdout.on('resize', resizeTerminal);
+        sh.stdout.pipe(process.stdout);
+        process.stdin.pipe(sh.stdin);
 
-    sh.stdout.pipe(process.stdout);
-    process.stdin.pipe(sh.stdin);
+        const cleanUp = () => {
+            process.stdin.setRawMode(false);
+            process.stdin.pause();
+            ssh.dispose();
+        };
+        process.on('SIGINT', cleanUp);
+        sh.on('close', cleanUp);
+    });
 
-    const cleanUp = () => {
-        process.stdin.setRawMode(false);
-        process.stdin.pause();
-        ssh.dispose();
-    };
-    process.on('SIGINT', cleanUp);
-    sh.on('close', cleanUp);
-});
+program.command("bind <port> <name>")
+    .option("--otp <otp>", "Login with the OTP user")
+    .action(async (port, name, o) => {
+        const ssh = await connect(o.otp ? { username: "otp", password: o.otp } : {});
+
+        const portInt = parseInt(port, 10);
+        if (String(portInt) !== port || portInt < 1 || portInt > 65535)
+            throw new Error("port must be an integer between 1-65535 inclusif");
+
+        const server = new Server({ noDelay: true, pauseOnConnect: true }, async socket => {
+            console.log(chalk.bgCyan.underline.black(`New connection for ${name}`));
+            const ch = await ssh.forwardOut("127.0.0.1", portInt, name, 1);
+            pipeRaw(socket, ch);
+            socket.resume();
+
+            server.once("close", () => {
+                socket.destroy();
+                ch.destroy();
+            });
+        });
+        server.listen(portInt, () => {
+            console.log("\n" + chalk.bgWhite.underline.black(`Listening on port ${port} for ${name}`) + "\n");
+        });
+
+        const cleanUp = () => {
+            server.unref();
+            server.close();
+            ssh.dispose();
+        };
+        process.on('SIGINT', cleanUp);
+    });
+
+program.command("register <host> <port> <name>")
+    .option("--otp <otp>", "Login with the OTP user")
+    .action(async (host, port, name, o) => {
+        //ssh_cmd_unique -L localhost:${3}:${2}:1 -N
+        const ssh = await connect(o.otp ? { username: "otp", password: o.otp } : {});
+
+        const portInt = parseInt(port, 10);
+        if (String(portInt) !== port || portInt < 1 || portInt > 65535)
+            throw new Error("port must be an integer between 1-65535 inclusif");
+
+        const details = await ssh.forwardIn(name, 1, (details, accept, reject) => {
+            console.log(chalk.bgCyan.underline.black(`New connection for ${name}`));
+            console.log(details)
+            const socket = createConnection({
+                port: portInt,
+                host,
+                noDelay: true
+            });
+            socket.once("ready", () => {
+                const ch = accept();
+                pipeRaw(ch, socket);
+                console.log("connected")
+            });
+        });
+
+        console.log("\n" + chalk.bgWhite.underline.black(`Waiting connection for ${name}`) + "\n");
+
+        const cleanUp = () => {
+            details.dispose();
+            ssh.dispose();
+        };
+        process.on('SIGINT', cleanUp);
+    });
 
 program.command("test").action(async () => {
     console.log("b");
