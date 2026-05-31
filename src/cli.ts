@@ -297,8 +297,11 @@ async function main() {
                     process.exit(1);
                 }
             }, intervalMs);
-            // setInterval above also keeps the event loop alive.
-            await new Promise(() => { void t; });
+            // stdin EOF means ssh tore the channel down — exit cleanly so
+            // the local ssh -L listener collapses with us.
+            process.stdin.on("close", () => { clearInterval(t); process.exit(0); });
+            process.stdin.on("end", () => { clearInterval(t); process.exit(0); });
+            process.stdin.resume();
         });
 
     service.command("install")
