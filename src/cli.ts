@@ -440,7 +440,7 @@ async function main() {
         });
 
     program.command("tun-attach")
-        .description("Gateway-side glue for `ssh <gw> mad tun-attach <group>` — exec's socat to pipe Ethernet frames between stdio and a marc-owned tap")
+        .description("Gateway-side glue for `ssh <gw> mad tun-attach <group>` — pumps length-prefixed Ethernet frames between stdio and a daemon-allocated tap")
         .argument("<group>")
         .option("--l3", "Use L3 (TUN) instead of L2 (TAP)")
         .action(async (group, opts) => {
@@ -448,29 +448,24 @@ async function main() {
             const r = await daemon.tapAllocate(group, mode);
 
             // Single control line on stderr — the client parses this; stdout
-            // is now the frame channel and must stay clean.
+            // is now the (framed) data channel and must stay clean.
             process.stderr.write(`MAD_TUN_OK ${r.ifname} ${r.ip} peer=${r.peerIp} group=${r.group} mode=${r.mode}\n`);
 
-            // The daemon created the tap and chowned it to us, so socat can
-            // TUNSETIFF directly without CAP_NET_ADMIN. Going stdio↔tap in
-            // one socat (instead of stdio↔unix-socket↔socat↔tap as before)
-            // removed the Unix-socket choke point that was capping TCP at
-            // ~0.4 Mbps.
-            const tunType = r.mode === "l2" ? "tap" : "tun";
-            const { spawn } = await import("child_process");
-            const socat = spawn("socat",
-                ["-b", "65536", "STDIO", `TUN,tun-name=${r.ifname},tun-type=${tunType},iff-no-pi`],
-                { stdio: ["inherit", "inherit", "inherit"] });
+            // socat over an SSH byte stream loses Ethernet-frame
+            // boundaries (TUN write must be exactly one frame, but socat
+            // happily reads N frames concatenated and writes them as
+            // one). We use length-prefix framing instead — see
+            // utils/tapPipe.ts for details.
+            const { openTap, pump } = await import("./utils/tapPipe");
+            const fd = openTap(r.ifname, r.mode);
 
             let cleaning = false;
             const cleanup = async () => {
                 if (cleaning) return;
                 cleaning = true;
-                try { socat.kill("SIGTERM"); } catch {}
                 try { await daemon.tunRelease(r.ifname); } catch {}
                 process.exit(0);
             };
-            socat.on("exit", cleanup);
             process.on("SIGHUP", cleanup);
             process.on("SIGTERM", cleanup);
             process.on("SIGINT", cleanup);
@@ -478,6 +473,13 @@ async function main() {
             setInterval(() => {
                 if (process.ppid !== originalPpid) cleanup();
             }, 1000);
+
+            try {
+                await pump({ fd, remoteIn: process.stdin, remoteOut: process.stdout });
+            } catch (e: any) {
+                process.stderr.write(`mad tun-attach pump: ${e.message}\n`);
+            }
+            await cleanup();
         });
 
     // L2 (TAP) — bridged into mad-<group>, carries broadcast/ARP/non-IP.

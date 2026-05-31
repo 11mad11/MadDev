@@ -98,32 +98,24 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
     // SSH_ORIGINAL_COMMAND only carries the subcommand — no leading "mad"
     // (ForceCommand prepends the binary path itself).
     const modeFlag = mode === "l3" ? "--l3" : "";
-    const sshCmd = `ssh -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes ${gateway} tun-attach ${group} ${modeFlag}`.trim();
-    // socat options:
-    //   EXEC default: pipes for child stdin/stdout; child stderr inherits
-    //   from socat — which we wire to our pipe below, so ssh's "MAD_TUN_OK"
-    //   line surfaces in our captured stderr.
-    //   -b 65536: bigger I/O block so we don't syscall every 8 KB on the
-    //   hot frame-forwarding path.
-    const socatArgs = [
-        "-b", "65536",
-        `EXEC:${JSON.stringify(sshCmd)}`,
-        `TUN,tun-name=${localIfname},tun-type=${ifPrefix},iff-no-pi,up`,
-    ];
-    process.stdout.write(`opening ${ifPrefix} ${localIfname} (${mode === "l2" ? "L2 bridged" : "L3 routed"}) via ssh ${gateway}…\n`);
-    const socat = spawn("socat", socatArgs, { stdio: ["ignore", "ignore", "pipe"] });
+    const sshArgs = [
+        "-o", "ServerAliveInterval=30",
+        "-o", "ExitOnForwardFailure=yes",
+        gateway,
+        "tun-attach", group, modeFlag,
+    ].filter(Boolean);
 
-    // Look for the MAD_TUN_OK line that the gateway-side mad printed to its
-    // stderr. socat's pty/stderr funnel mixes ssh's stderr through socat
-    // back to ours; we parse it here.
+    process.stdout.write(`opening ${ifPrefix} ${localIfname} (${mode === "l2" ? "L2 bridged" : "L3 routed"}) via ssh ${gateway}…\n`);
+    const ssh = spawn("ssh", sshArgs, { stdio: ["pipe", "pipe", "pipe"] });
+
     let stderrBuf = "";
     let assigned: { ip: string; peerIp: string } | null = null;
     await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
-            socat.kill("SIGTERM");
+            ssh.kill("SIGTERM");
             reject(new Error("timed out waiting for gateway to allocate IP"));
         }, 15_000);
-        socat.stderr.on("data", (c) => {
+        ssh.stderr.on("data", (c) => {
             const s = c.toString();
             stderrBuf += s;
             process.stderr.write(s);
@@ -134,9 +126,9 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
                 resolve();
             }
         });
-        socat.on("exit", (code) => {
+        ssh.on("exit", (code) => {
             clearTimeout(timer);
-            if (!assigned) reject(new Error(`socat exited (${code}) before allocating IP`));
+            if (!assigned) reject(new Error(`ssh exited (${code}) before allocating IP`));
         });
     });
 
@@ -144,20 +136,31 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
     const ourIp = assigned.peerIp;
     spawnSync("ip", ["addr", "add", ourIp, "dev", localIfname], { stdio: "inherit" });
 
+    // Open the local tap and start pumping length-prefixed frames between
+    // it and ssh's stdio. See utils/tapPipe.ts for the framing rationale
+    // (socat over a byte stream loses TUN frame boundaries).
+    const { openTap, pump } = await import("../utils/tapPipe");
+    const fd = openTap(localIfname, mode);
+
     const state = loadState();
     state.entries.push({
         gateway, group,
         localIfname,
         localIp: ourIp,
         peerIp: assigned.ip,
-        sshPid: socat.pid ?? -1,
+        sshPid: ssh.pid ?? -1,
         startedAt: Date.now(),
     });
     saveState(state);
 
     process.stdout.write("\n" + chalk.green(`✔ ${gateway}/${group} ${localIfname} ${ourIp} (${mode.toUpperCase()})`) + "\n");
-    process.stdout.write(`  socat pid ${socat.pid} — leave with: ${chalk.yellow(`mad tun leave ${gateway}/${group}`)}\n`);
-    socat.unref();
+    process.stdout.write(`  ssh pid ${ssh.pid} — leave with: ${chalk.yellow(`mad tap leave ${gateway}/${group}`)}\n`);
+
+    // Detach: pump runs in this process until ssh exits or fd closes.
+    // We deliberately don't `ssh.unref()` here — the pump keeps the
+    // event loop alive on its own.
+    pump({ fd, remoteIn: ssh.stdout, remoteOut: ssh.stdin })
+        .catch(e => process.stderr.write(`mad tap pump: ${e.message}\n`));
 }
 
 export async function tunLeave(gwGroup: string): Promise<void> {
