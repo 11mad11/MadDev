@@ -1,15 +1,5 @@
-import { ServerChannel } from "ssh2";
 import * as inquirerO from '@inquirer/prompts';
-import { Context } from "@inquirer/type";
 import { createPrompt, isBackspaceKey, isDownKey, isEnterKey, isUpKey, useKeypress, usePagination, usePrefix, useState } from "@inquirer/core";
-
-
-export function getInquirerContext(channel: ServerChannel): Context {
-    return {
-        input: createProxy(channel, "in"),
-        output: createProxy(channel, "out")
-    }
-}
 
 export type TreeNodeAction<V> = { text: string, value: V }
 export type TreeNodeParent<V> = { text: string, childs: TreeNode<V>[] }
@@ -18,7 +8,7 @@ export type TreeNode<V> = TreeNodeAction<V> | TreeNodeParent<V>;
 const Tree: <V>(config: {
     tree: TreeNodeParent<V>,
     pageSize: number
-}, context?: import("@inquirer/type").Context) => import("@inquirer/type").CancelablePromise<V> = createPrompt((config, done) => {
+}, context?: import("@inquirer/type").Context) => Promise<V> = createPrompt((config, done) => {
     /**
      * Stack must always have:
      * length>0
@@ -60,7 +50,7 @@ const Tree: <V>(config: {
     });
 
     //rendering
-    const prefix = usePrefix({ isLoading: false });
+    const prefix = usePrefix({ status: "idle" });
     const path = stack.slice(0, -1).reduce((o, c) => {
         const child = o[0].childs[c];
         if ("childs" in child)
@@ -112,45 +102,6 @@ export function fixedInquirer(ctx: InquirerCtx) {
     }
 }
 
-function fix<
-    A,
-    R extends ReturnType<import("@inquirer/type").Prompt<any, A>>
->(fn: (arg: A, ctx: InquirerCtx) => R, ctx: InquirerCtx): (arg: A) => R {
-    return ((arg: A) => {
-        const prompt = fn(arg, ctx);
-        ctx.input?.on("close", () => {
-            prompt.cancel();//Without this, the server process can't exit if a user close stream mid-prompt
-        })
-        return prompt;
-    })
-}
-
-/**
- * Inquirer close the stream after each prompt
- * @param obj 
- * @param name 
- * @returns 
- */
-function createProxy<T extends object>(obj: T, name: string): T {
-    return new Proxy(obj, {
-        get(target, property, receiver) {
-            if (property === "end")
-                return () => { }
-            if (property === "eof")
-                return () => { }
-            if (property === "close")
-                return () => { }
-            if (property === "write")
-                return (...args) => {
-                    console.log(args);
-                    target[property](...args);
-                }
-            //console.log(`Property accessed: ${String(property)} on ${name}`);
-            return Reflect.get(target, property, receiver);
-        },
-        set(target, property, value, receiver) {
-            //console.log(`Property set: ${String(property)} = ${value}`);
-            return Reflect.set(target, property, value, receiver);
-        }
-    });
+function fix<A, R>(fn: (arg: A, ctx: InquirerCtx) => R, ctx: InquirerCtx): (arg: A) => R {
+    return ((arg: A) => fn(arg, ctx));
 }

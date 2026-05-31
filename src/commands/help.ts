@@ -1,50 +1,35 @@
 import chalk from 'chalk';
-import { Cmd } from "../shell";
 import { createCommand } from "@commander-js/extra-typings";
+import { Cmd, cmdDef } from "../menu";
 import { prettyTerm } from '../utils/term';
 
-export default {
-    perm(ctx) {
+export default cmdDef({
+    perm() {
         return true;
     },
     cmd: () => createCommand("help").summary("Help"),
-    async pty(ctx) {
-        return [[], {}]
+    async pty() {
+        return [[] as const, {}];
     },
-    async run({ output,channel }, opts) {
-        const { cmd, h1, h2, h3, line } = prettyTerm(output);
+    async run({ output }) {
+        const { cmd, h1, h2, line } = prettyTerm(output);
 
-        h1("== All command needed to have fun ==");
+        h1("== mad ==");
+        line("mad runs as your login program; system sshd handles auth via certs signed by mad's CA.");
 
-        h2("Install instruction");
-        cmd("mad help install");
+        h2("Enroll a new user (sysadmin)");
+        cmd("sudo mad otp create " + chalk.white.underline("username"));
+        line("Hand the OTP to the new user. They then run:");
+        cmd("ssh otp@" + chalk.white.underline("server"));
+        line("…and enter the OTP + their public key. Save the returned cert as ~/.ssh/id_rsa-cert.pub.");
 
-        h2("Update");
-        cmd("mad update");
+        h2("Register a TCP service for a group");
+        cmd("ssh -R /run/mad/groups/" + chalk.white.underline("group") + "/" + chalk.white.underline("name") + ".sock:localhost:" + chalk.white.underline("port") + " server");
 
-        h2("VPN");
-        line("By connecting to this vpn, you will be on the same network as the othe client connacted. That would be the same as being all connected to the same router.")
-        cmd("mad tun " + chalk.white.underline("service"));
+        h2("Use a TCP service from a group you belong to");
+        cmd("ssh -L " + chalk.white.underline("localport") + ":/run/mad/groups/" + chalk.white.underline("group") + "/" + chalk.white.underline("name") + ".sock server");
 
-        h2("Port forward (TCP Only)");
-        line("By forwarding a port using this utility, you can connect to server without open the port to the Internat. It is perfect to easly invite friend on a localy hosted game.")
-        h3("Server");
-        cmd("mad register " + chalk.white.underline("name") + " " + chalk.white.underline("port"));
-        h3("Client(s)");
-        cmd("mad use " + chalk.white.underline("name") + " " + chalk.white.underline("local_port"));
-
-        h1("== Install ==");
-        h2("Linux");
-        cmd("ssh none@SERVER mad download | sudo tee /usr/bin/mad > /dev/null");
-        cmd("sudo chmod +x /usr/bin/mad");
-        cmd("mad config SERVER PORT");
-        cmd("mad sign");
-
-        h2("Nix");
-        cmd("ssh none@SERVER mad nix | tee >(sed -n $'/\\f/,$p' | sed '1d' > mad.nix)");
-        line("if you want to test the cmd in the current shell:", false);
-        cmd("nix-env -i -f mad.nix");
-        line("The next step is to install it the way you prefer. (See nix documentation for more help)");
-        cmd("mad sign");
+        h2("Join a group's L2 VPN");
+        cmd("mad tap join " + chalk.white.underline("group"));
     },
-} satisfies Cmd
+} satisfies Cmd);

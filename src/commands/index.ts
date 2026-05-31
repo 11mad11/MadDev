@@ -1,21 +1,15 @@
-import { MenuNodeParent } from "../shell";
-import admin from "./admin";
-import buildClient from "./buildClient";
+import { MenuNodeParent } from "../menu";
 import help from "./help";
-import install from "./install";
-import signsshkey from "./signsshkey";
-import tun from "./tun";
-import update from "./update";
+import admin from "./admin";
+import services from "./services";
+import networking from "./networking";
 
 export default {
     text: "Menu",
     children: [
         help,
+        services,
+        networking,
         admin,
-        signsshkey,
-        ...tun,
-        install,
-        update,
-        buildClient
-    ]
-} satisfies MenuNodeParent
+    ],
+} satisfies MenuNodeParent;

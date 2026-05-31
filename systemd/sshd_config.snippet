@@ -1,0 +1,23 @@
+# Drop this into /etc/ssh/sshd_config.d/99-mad.conf (or append to sshd_config).
+# Then: `sudo mad ca pubkey | sudo tee /etc/ssh/mad_ca.pub` and reload sshd.
+
+TrustedUserCAKeys /etc/ssh/mad_ca.pub
+RevokedKeys /etc/ssh/mad_krl
+
+# Members of mad-users land in the mad menu and can forward Unix sockets.
+Match Group mad-users
+    ForceCommand /usr/bin/mad
+    AllowStreamLocalForwarding all
+    StreamLocalBindMask 0117
+    StreamLocalBindUnlink yes
+
+# The dedicated `otp` account is the public on-ramp for new users.
+# It accepts `none` auth and immediately runs `mad enroll` to consume an OTP
+# and return a signed cert.
+Match User otp
+    AuthenticationMethods none
+    PermitEmptyPasswords yes
+    ForceCommand /usr/bin/mad enroll
+    AllowTcpForwarding no
+    AllowStreamLocalForwarding no
+    PermitTTY yes

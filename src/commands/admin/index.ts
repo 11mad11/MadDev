@@ -1,15 +1,10 @@
-import { cmdDef, cmdMenu } from "../../shell";
-import deleteUser from "./deleteUser";
-import forgetUserKey from "./forgetUserKey";
+import { cmdMenu } from "../../menu";
+import group from "./group";
+import user from "./user";
 import otp from "./otp";
-import role from "./role";
+import ca from "./ca";
 
 export default cmdMenu({
     text: "Admin",
-    children: [
-        otp,
-        deleteUser,
-        forgetUserKey,
-        role
-    ]
+    children: [group, user, ca, otp],
 });

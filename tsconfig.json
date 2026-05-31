@@ -1,6 +1,19 @@
 {
     "compilerOptions": {
+        "target": "ES2022",
+        "module": "ES2022",
+        "moduleResolution": "bundler",
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "allowSyntheticDefaultImports": true,
         "downlevelIteration": true,
-        "useDefineForClassFields": false
-    }
+        "useDefineForClassFields": false,
+        "skipLibCheck": true,
+        "strict": false,
+        "noImplicitAny": false,
+        "noEmit": true,
+        "lib": ["ES2022"],
+        "types": ["bun"]
+    },
+    "include": ["src/**/*.ts"]
 }

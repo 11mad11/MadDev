@@ -13,7 +13,7 @@
                 "${workspaceFolder}/node_modules/**",
             ],
             "runtimeExecutable": "npx",
-            "args": ["tsx","./src/index.ts"],
+            "args": ["tsx","./src/cli.ts"],
             "console": "integratedTerminal",
             "internalConsoleOptions": "neverOpen",
             "outFiles": [

@@ -1,0 +1,10 @@
+{
+  "mode": "pre",
+  "tag": "alpha",
+  "initialVersions": {
+    "mad": "0.1.0"
+  },
+  "changesets": [
+    "v2-linux-native-rewrite"
+  ]
+}

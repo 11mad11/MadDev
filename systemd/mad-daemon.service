@@ -1,0 +1,29 @@
+[Unit]
+Description=mad privileged daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/mad daemon
+Restart=on-failure
+RestartSec=2
+
+# Runtime dirs
+RuntimeDirectory=mad
+RuntimeDirectoryMode=0750
+StateDirectory=mad
+StateDirectoryMode=0750
+
+# Privileges
+User=root
+Group=mad
+AmbientCapabilities=CAP_NET_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SETUID CAP_SETGID
+
+# Hardening
+NoNewPrivileges=no
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/mad /var/lib/mad /etc/mad
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
