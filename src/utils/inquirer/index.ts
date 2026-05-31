@@ -83,12 +83,9 @@ export function fixedInquirer(ctx: InquirerCtx) {
         input: fix(inquirerO.input, ctx),
         select: async <V>(config: SelectConfig<V>): Promise<V> => {
             const rep = await selectFixed(config);
-            for (const c of config.choices) {
-                if ("value" in c && c.value == rep) {
-                    await c?.action();
-                    break;
-                }
-            }
+            const choice = config.choices.find((c): c is typeof c & { action?: () => Promise<void> } =>
+                "value" in c && c.value == rep);
+            if (choice?.action) await choice.action();
             return rep as V;
         },
         checkbox: fix(inquirerO.checkbox, ctx),
