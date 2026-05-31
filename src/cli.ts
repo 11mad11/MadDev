@@ -65,6 +65,51 @@ async function main() {
         .argument("[topic]", "doc file under docs/ (omit for the index)")
         .action((topic) => runHelpCli(topic));
 
+    const gateway = program.command("gateway").description("Add / list / remove mad gateways in ~/.ssh/config");
+    gateway.command("add")
+        .description("Append a Host block for a gateway")
+        .argument("<user@host>")
+        .option("--alias <name>", "Host alias")
+        .action(async (spec, opts) => {
+            const { appendHostBlock } = await import("./utils/sshConfig");
+            const m = spec.match(/^([^@]+)@(.+)$/);
+            if (!m) throw new Error(`expected user@host, got '${spec}'`);
+            const alias = opts.alias ?? m[2].split(".")[0];
+            appendHostBlock(alias, m[2], m[1]);
+            process.stdout.write(`added Host ${alias} → ${m[1]}@${m[2]}\n`);
+            const { spawnSync } = await import("child_process");
+            const r = spawnSync("ssh", ["-o", "StrictHostKeyChecking=accept-new", alias, "ca", "pubkey"], { encoding: "utf-8" });
+            if (r.status === 0) process.stdout.write(`✔ ${alias} CA: ${(r.stdout ?? "").trim()}\n`);
+            else process.stderr.write(`! ssh ${alias} ca pubkey failed: ${(r.stderr ?? "").trim()}\n`);
+        });
+    gateway.command("ls")
+        .description("List mad gateways in ssh_config")
+        .action(async () => {
+            const { listMadGateways } = await import("./utils/sshConfig");
+            const gws = listMadGateways();
+            if (!gws.length) { process.stdout.write("(no gateways)\n"); return; }
+            for (const g of gws) process.stdout.write(`${g.alias}\t${g.user}@${g.hostName}\n`);
+        });
+    gateway.command("rm")
+        .description("Remove a gateway's Host block")
+        .argument("<alias>")
+        .action(async (alias) => {
+            const { removeHostBlock } = await import("./utils/sshConfig");
+            const ok = removeHostBlock(alias);
+            process.stdout.write(ok ? `removed Host ${alias}\n` : `no Host '${alias}' found\n`);
+        });
+    gateway.command("test")
+        .description("Round-trip-ping a gateway")
+        .argument("<alias>")
+        .action(async (alias) => {
+            const { spawnSync } = await import("child_process");
+            const t0 = Date.now();
+            const r = spawnSync("ssh", [alias, "ca", "pubkey"], { encoding: "utf-8" });
+            const ms = Date.now() - t0;
+            if (r.status === 0) process.stdout.write(`✔ ${alias} ${ms}ms\n  ${(r.stdout ?? "").trim()}\n`);
+            else { process.stderr.write(`✘ ${alias}: ${(r.stderr ?? "").trim()}\n`); process.exit(1); }
+        });
+
     program.command("ssh-config")
         .description("Print an ssh_config Host block for paste-into-~/.ssh/config")
         .option("--alias <name>", "Host alias", "mad")
@@ -221,30 +266,66 @@ async function main() {
 
     const service = program.command("service");
     service.command("ls")
-        .description("List visible services")
+        .description("List visible services (filters orphan sockets; fans out across mad gateways by default)")
         .argument("[group]")
-        .action((group) => {
-            const list = listServices(group);
-            if (!list.length) { process.stdout.write("(none visible)\n"); return; }
-            for (const s of list) process.stdout.write(`${s.group}/${s.name}\t${s.socketPath}\n`);
+        .option("--gateway <alias>", "Query a single gateway instead of all")
+        .option("--local-only", "Skip the fan-out; just read /run/mad/groups here")
+        .option("--json", "Emit JSON for scripting / cross-gateway fanout")
+        .option("--orphans", "Include orphan socket files (no live listener)")
+        .action(async (group, opts) => {
+            const { listMadGateways } = await import("./utils/sshConfig");
+            const { listServicesAcross } = await import("./services/discoverRemote");
+
+            const fanoutTargets = opts.localOnly
+                ? []
+                : (opts.gateway
+                    ? listMadGateways().filter(g => g.alias === opts.gateway)
+                    : listMadGateways());
+
+            if (fanoutTargets.length === 0) {
+                const list = listServices(group, !!opts.orphans);
+                if (opts.json) { process.stdout.write(JSON.stringify(list) + "\n"); return; }
+                if (!list.length) { process.stdout.write("(none visible)\n"); return; }
+                for (const s of list) process.stdout.write(`${s.group}/${s.name}\t${s.socketPath}\n`);
+                return;
+            }
+
+            const result = await listServicesAcross(fanoutTargets, group);
+            if (opts.json) { process.stdout.write(JSON.stringify(result) + "\n"); return; }
+
+            if (result.services.length === 0 && result.errors.length === 0) {
+                process.stdout.write("(none visible)\n");
+            }
+            for (const s of result.services) {
+                process.stdout.write(`${s.gateway}/${s.group}/${s.name}\t${s.socketPath}\n`);
+            }
+            for (const e of result.errors) {
+                process.stderr.write(`! ${e.gateway}: ${e.error}\n`);
+            }
         });
     service.command("register")
-        .description("Print the ssh -R command to register a service")
-        .argument("<groupname>", "group/name")
+        .description("Print the ssh -R command to register a service (accepts gateway/group/name or group/name)")
+        .argument("<spec>", "gateway/group/name or group/name")
         .argument("<target>", "local addr:port")
-        .action((groupname, target) => {
-            const [g, n] = groupname.split("/");
-            if (!g || !n) throw new Error("expected <group>/<name>");
-            process.stdout.write(`ssh -R /run/mad/groups/${g}/${n}.sock:${target} mad service hold ${g}/${n}\n`);
+        .action((spec, target) => {
+            const parts = spec.split("/");
+            const alias = parts.length === 3 ? parts[0] : "mad";
+            const g = parts.length === 3 ? parts[1] : parts[0];
+            const n = parts.length === 3 ? parts[2] : parts[1];
+            if (!g || !n) throw new Error("expected <gateway>/<group>/<name> or <group>/<name>");
+            process.stdout.write(`ssh -R /run/mad/groups/${g}/${n}.sock:${target} ${alias} service hold ${g}/${n}\n`);
         });
     service.command("use")
-        .description("Print the ssh -L command to use a service")
-        .argument("<groupname>", "group/name")
+        .description("Print the ssh -L command to use a service (accepts gateway/group/name or group/name)")
+        .argument("<spec>", "gateway/group/name or group/name")
         .argument("<localport>")
-        .action((groupname, localport) => {
-            const [g, n] = groupname.split("/");
-            if (!g || !n) throw new Error("expected <group>/<name>");
-            process.stdout.write(`ssh -L ${localport}:/run/mad/groups/${g}/${n}.sock mad service ping ${g}/${n}\n`);
+        .action((spec, localport) => {
+            const parts = spec.split("/");
+            const alias = parts.length === 3 ? parts[0] : "mad";
+            const g = parts.length === 3 ? parts[1] : parts[0];
+            const n = parts.length === 3 ? parts[2] : parts[1];
+            if (!g || !n) throw new Error("expected <gateway>/<group>/<name> or <group>/<name>");
+            process.stdout.write(`ssh -L ${localport}:/run/mad/groups/${g}/${n}.sock ${alias} service ping ${g}/${n}\n`);
         });
     service.command("hold")
         .description("Hold an ssh -R session; on boot, sweep any orphan sockets in the same group dir")
