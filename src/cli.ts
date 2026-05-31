@@ -261,12 +261,16 @@ async function main() {
             const { spawn } = await import("child_process");
             const watcherCode = `
                 const fs = require("fs");
-                const watchPid = parseInt(process.argv[2], 10);
-                const path = process.argv[3];
+                const watchPid = parseInt(process.argv[process.argv.length - 2], 10);
+                const path = process.argv[process.argv.length - 1];
+                const log = (m) => { try { fs.appendFileSync("/tmp/mad-watcher.log", new Date().toISOString() + " " + m + "\\n"); } catch {} };
+                log("watcher started pid=" + process.pid + " watching=" + watchPid + " path=" + path);
                 setInterval(() => {
                     try { process.kill(watchPid, 0); }
                     catch (e) {
-                        try { if (fs.existsSync(path)) fs.unlinkSync(path); } catch {}
+                        log("parent " + watchPid + " gone (" + e.code + "), unlinking " + path);
+                        try { if (fs.existsSync(path)) fs.unlinkSync(path); log("unlinked"); }
+                        catch (e) { log("unlink failed: " + e.message); }
                         process.exit(0);
                     }
                 }, 500);
@@ -276,6 +280,7 @@ async function main() {
                 stdio: "ignore",
             });
             watcher.unref();
+            process.stderr.write(`mad service hold: spawned watcher pid=${watcher.pid} for ${path}\n`);
             // Main process: just sit there until sshd shoots us.
             setInterval(() => {}, 60_000);
         });
