@@ -60,6 +60,12 @@ export function getUserGid(username: string): number | undefined {
     return Number.isFinite(gid) ? gid : undefined;
 }
 
+export function getUserPrimaryGroup(username: string): string | undefined {
+    const r = spawnSync("id", ["-gn", username], { encoding: "utf-8" });
+    if (r.status !== 0) return undefined;
+    return r.stdout.trim() || undefined;
+}
+
 export function getUserHome(username: string): string | undefined {
     const r = spawnSync("getent", ["passwd", username], { encoding: "utf-8" });
     if (r.status !== 0) return undefined;

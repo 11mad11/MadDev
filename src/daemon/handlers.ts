@@ -1,8 +1,8 @@
 import { execFileSync, spawnSync } from "child_process";
 import { randomBytes } from "crypto";
-import { writeFileSync, mkdirSync, chmodSync, existsSync, readFileSync, chownSync, appendFileSync } from "fs";
+import { writeFileSync, mkdirSync, chmodSync, existsSync, readFileSync, chownSync, appendFileSync, statSync } from "fs";
 import { CA } from "../ca";
-import { assertValidName, getUserGid, getUserGroups, getUserHome, getUserUid, userExists } from "../groups";
+import { assertValidName, getGroupGid, getGroupMembers, getUserGid, getUserGroups, getUserHome, getUserPrimaryGroup, getUserUid, userExists } from "../groups";
 import { CertRecord, DaemonState, GroupNetns, OtpRecord, PeerCred, Request, Response, RevocationRecord, TapRecord } from "./protocol";
 import { saveState } from "./state";
 
@@ -212,6 +212,12 @@ function createOtp(req: { username: string }, ctx: HandlerCtx) {
     };
     ctx.state.otps.push(record);
     saveState(ctx.state);
+
+    // The new user is in mad-users + has a primary group now; bless their
+    // personal /run/mad/groups/<primary>/ dir immediately so they can
+    // ssh -R into it on first login without waiting for the 60s timer.
+    try { syncGroupDirs(); } catch (e) { console.error("syncGroupDirs after createOtp:", e); }
+
     return { otp, expiresAt: record.expiresAt };
 }
 
@@ -363,6 +369,48 @@ export function writeKrlFile(ctx: HandlerCtx): void {
 function madGroupsOf(username: string): string[] {
     const housekeeping = new Set(["mad", "mad-users", "mad-admin"]);
     return getUserGroups(username).filter(g => !housekeeping.has(g));
+}
+
+/**
+ * Make sure /run/mad/groups/<g>/ exists for every Linux group that has at
+ * least one mad-users member — plus each user's primary group, which is
+ * how "personal" per-user dirs come into being for free under
+ * USERGROUPS_ENAB. Run on daemon startup (recovers from /run tmpfs reset
+ * on reboot), on a periodic timer, and synchronously right after
+ * `mad otp` adds a user to mad-users.
+ */
+export function syncGroupDirs(): { changed: number; skipped: number } {
+    const HOUSEKEEPING = new Set(["mad", "mad-users", "mad-admin", "root", "shadow", "wheel", "sudo"]);
+
+    const members = getGroupMembers("mad-users");
+    const want = new Set<string>();
+    for (const user of members) {
+        const primary = getUserPrimaryGroup(user);
+        if (primary && !HOUSEKEEPING.has(primary)) want.add(primary);
+        for (const g of getUserGroups(user)) {
+            if (!HOUSEKEEPING.has(g)) want.add(g);
+        }
+    }
+
+    let changed = 0, skipped = 0;
+    mkdirSync("/run/mad/groups", { recursive: true });
+
+    for (const name of want) {
+        const gid = getGroupGid(name);
+        if (gid === undefined) { skipped++; continue; }
+        const dir = `/run/mad/groups/${name}`;
+        try {
+            let touched = false;
+            if (!existsSync(dir)) { mkdirSync(dir); touched = true; }
+            const s = statSync(dir);
+            if (s.uid !== 0 || s.gid !== gid) { chownSync(dir, 0, gid); touched = true; }
+            if ((s.mode & 0o7777) !== 0o2770) { chmodSync(dir, 0o2770); touched = true; }
+            if (touched) changed++;
+        } catch {
+            skipped++;
+        }
+    }
+    return { changed, skipped };
 }
 
 export function pruneOtps(state: DaemonState) {

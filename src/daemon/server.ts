@@ -4,7 +4,7 @@ import { dirname } from "path";
 import { createInterface } from "readline";
 import { CA } from "../ca";
 import { getGroupGid } from "../groups";
-import { handle, pruneOtps, writeKrlFile } from "./handlers";
+import { handle, pruneOtps, syncGroupDirs, writeKrlFile } from "./handlers";
 import { saveState } from "./state";
 import { getPeerCred } from "./peercred";
 import { loadState } from "./state";
@@ -30,20 +30,31 @@ export async function runDaemon(): Promise<void> {
     try { writeKrlFile({ state, ca, peer: { pid: 0, uid: 0, gid: 0 }, isRootSocket: true }); }
     catch (e) { console.error("KRL bootstrap:", e); }
 
+    // /run is tmpfs — group dirs are gone after a reboot. Rebuild them
+    // from the Linux group state (members of mad-users + their primary
+    // groups + any other groups they're in).
+    try {
+        const r = syncGroupDirs();
+        if (r.changed > 0) console.log(`syncGroupDirs (boot): touched ${r.changed} dir(s)`);
+    } catch (e) { console.error("syncGroupDirs bootstrap:", e); }
+
     const userServer = bind(DAEMON_SOCKET, 0o660, madGid, (sock) => handleConn(sock, false, state, ca));
     const rootServer = bind(DAEMON_ROOT_SOCKET, 0o600, 0, (sock) => handleConn(sock, true, state, ca));
 
     // Periodic prune: any OTP that expires without being consumed gets its
     // password locked via passwd -l. Without this timer, an OTP would stay
     // a valid login until the next handler call happens to call pruneOtps.
-    const prune = setInterval(() => {
+    // Same timer also re-syncs /run/mad/groups/<g>/ — covers admin-issued
+    // useradd / usermod -aG mad-users that happens outside of mad otp.
+    const tick = setInterval(() => {
         const before = state.otps.length;
         pruneOtps(state);
         if (state.otps.length !== before) saveState(state);
+        try { syncGroupDirs(); } catch (e) { console.error("syncGroupDirs tick:", e); }
     }, 60 * 1000);
 
-    process.on("SIGINT", () => { clearInterval(prune); shutdown(userServer, rootServer); });
-    process.on("SIGTERM", () => { clearInterval(prune); shutdown(userServer, rootServer); });
+    process.on("SIGINT", () => { clearInterval(tick); shutdown(userServer, rootServer); });
+    process.on("SIGTERM", () => { clearInterval(tick); shutdown(userServer, rootServer); });
 
     console.log(`mad daemon listening on ${DAEMON_SOCKET} and ${DAEMON_ROOT_SOCKET}`);
 }
