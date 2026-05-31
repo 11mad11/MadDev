@@ -90,8 +90,10 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
     // socat does the heavy lifting: spawn ssh, forward stdio↔tap. socat's
     // SYSTEM address opens a child process and pipes; TUN address opens
     // /dev/net/tun and TUNSETIFFs to the existing local tap.
+    // SSH_ORIGINAL_COMMAND only carries the subcommand — no leading "mad"
+    // (ForceCommand prepends the binary path itself).
     const modeFlag = mode === "l3" ? "--l3" : "";
-    const sshCmd = `ssh -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes ${gateway} mad tun-attach ${group} ${modeFlag}`.trim();
+    const sshCmd = `ssh -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes ${gateway} tun-attach ${group} ${modeFlag}`.trim();
     const socatArgs = [
         // -d once: log fatal/error/warn/notice to stderr. We rely on
         // socat's stderr to surface ssh's stderr (it inherits).
