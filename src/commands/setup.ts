@@ -91,14 +91,17 @@ exec ${resolveBunPath()} run ${installDir}/src/cli.ts "$@"
 }
 
 function resolveBunPath(): string {
-    // Use the absolute path to bun so the wrapper works under restrictive PATHs
-    // (pct exec, sshd ForceCommand, cron, etc.) where /usr/local/bin may be absent.
-    const r = spawnSync("command", ["-v", "bun"], { encoding: "utf-8", shell: true });
-    const p = (r.stdout ?? "").trim();
-    if (p && existsSync(p)) return p;
+    // Use an absolute path to bun so the wrapper works under restrictive PATHs
+    // (pct exec, sshd ForceCommand, cron, etc.) where /usr/local/bin may be
+    // absent. Check canonical install locations first; `command -v` is a last
+    // resort because under `bun run`, `command -v bun` returns bun's internal
+    // /tmp staging path, not the real binary.
     for (const candidate of ["/usr/local/bin/bun", "/usr/bin/bun", `${process.env.HOME}/.bun/bin/bun`]) {
         if (existsSync(candidate)) return candidate;
     }
+    const r = spawnSync("command", ["-v", "bun"], { encoding: "utf-8", shell: true });
+    const p = (r.stdout ?? "").trim();
+    if (p && existsSync(p) && !p.startsWith("/tmp/")) return p;
     throw new Error("bun binary not found — install bun before running mad setup");
 }
 
