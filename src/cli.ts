@@ -260,16 +260,17 @@ async function main() {
                 process.exit(0);
             };
             // Signal handlers as a courtesy — they fire on graceful sshd
-            // session teardown — but real reliability comes from watching
-            // stdin: when the ssh channel closes, sshd closes our stdin
-            // pipe BEFORE it kills us, so the 'close' event lands ahead of
-            // any SIGKILL.
+            // teardown. The reliable hook on hard kills (which is what
+            // sshd uses when the local ssh dies abruptly) is watching our
+            // parent PID: sshd's per-session child gets killed, init
+            // reparents us, ppid changes from our original to 1.
             for (const sig of ["SIGHUP", "SIGTERM", "SIGINT", "SIGQUIT"] as const) {
                 process.on(sig, () => cleanup(sig));
             }
-            process.stdin.on("close", () => cleanup("stdin-close"));
-            process.stdin.on("end", () => cleanup("stdin-end"));
-            process.stdin.resume();
+            const originalPpid = process.ppid;
+            const tick = setInterval(() => {
+                if (process.ppid !== originalPpid) { clearInterval(tick); cleanup("ppid-changed"); }
+            }, 1000);
         });
 
     service.command("ping")
@@ -290,18 +291,15 @@ async function main() {
                 process.exit(1);
             }
             const intervalMs = Math.max(1, parseInt(opts.interval as string, 10)) * 1000;
+            const originalPpid = process.ppid;
             const t = setInterval(() => {
+                if (process.ppid !== originalPpid) { clearInterval(t); process.exit(0); }
                 if (!isLive()) {
                     process.stderr.write(`mad service ping: ${path} disappeared, exiting\n`);
                     clearInterval(t);
                     process.exit(1);
                 }
             }, intervalMs);
-            // stdin EOF means ssh tore the channel down — exit cleanly so
-            // the local ssh -L listener collapses with us.
-            process.stdin.on("close", () => { clearInterval(t); process.exit(0); });
-            process.stdin.on("end", () => { clearInterval(t); process.exit(0); });
-            process.stdin.resume();
         });
 
     service.command("install")
