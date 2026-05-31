@@ -253,24 +253,31 @@ async function main() {
             const [g, n] = groupname.split("/");
             if (!g || !n) throw new Error("expected <group>/<name>");
             const path = `/run/mad/groups/${g}/${n}.sock`;
-            const { existsSync, unlinkSync } = await import("fs");
-            const cleanup = (why: string) => {
-                try { if (existsSync(path)) unlinkSync(path); } catch {}
-                process.stderr.write(`mad service hold: ${why}, unlinked ${path}\n`);
-                process.exit(0);
-            };
-            // Signal handlers as a courtesy — they fire on graceful sshd
-            // teardown. The reliable hook on hard kills (which is what
-            // sshd uses when the local ssh dies abruptly) is watching our
-            // parent PID: sshd's per-session child gets killed, init
-            // reparents us, ppid changes from our original to 1.
-            for (const sig of ["SIGHUP", "SIGTERM", "SIGINT", "SIGQUIT"] as const) {
-                process.on(sig, () => cleanup(sig));
-            }
-            const originalPpid = process.ppid;
-            const tick = setInterval(() => {
-                if (process.ppid !== originalPpid) { clearInterval(tick); cleanup("ppid-changed"); }
-            }, 1000);
+            // sshd doesn't always send a graceful signal — on the path
+            // tested in production it goes straight to SIGKILL. So we
+            // spawn a detached watcher (its own session via detached:true)
+            // that the SIGKILL doesn't reach. The watcher polls our PID;
+            // when we go away, it unlinks the socket and exits.
+            const { spawn } = await import("child_process");
+            const watcherCode = `
+                const fs = require("fs");
+                const watchPid = parseInt(process.argv[2], 10);
+                const path = process.argv[3];
+                setInterval(() => {
+                    try { process.kill(watchPid, 0); }
+                    catch (e) {
+                        try { if (fs.existsSync(path)) fs.unlinkSync(path); } catch {}
+                        process.exit(0);
+                    }
+                }, 500);
+            `;
+            const watcher = spawn(process.execPath, ["-e", watcherCode, "--", String(process.pid), path], {
+                detached: true,
+                stdio: "ignore",
+            });
+            watcher.unref();
+            // Main process: just sit there until sshd shoots us.
+            setInterval(() => {}, 60_000);
         });
 
     service.command("ping")
