@@ -253,28 +253,23 @@ async function main() {
             const [g, n] = groupname.split("/");
             if (!g || !n) throw new Error("expected <group>/<name>");
             const path = `/run/mad/groups/${g}/${n}.sock`;
-            const { existsSync, unlinkSync, appendFileSync } = await import("fs");
-            const log = (m: string) => {
-                try { appendFileSync(`/tmp/mad-hold-${process.pid}.log`, new Date().toISOString() + " " + m + "\n"); } catch {}
-            };
-            log(`started, path=${path}, ppid=${process.ppid}`);
-            const cleanup = (sig: NodeJS.Signals) => {
-                log(`signal ${sig} received`);
-                try {
-                    if (existsSync(path)) { unlinkSync(path); log(`unlinked ${path}`); }
-                    else { log(`${path} already gone`); }
-                } catch (e: any) { log(`unlink failed: ${e?.message}`); }
-                process.stderr.write(`mad service hold: ${sig}, unlinked ${path}\n`);
+            const { existsSync, unlinkSync } = await import("fs");
+            const cleanup = (why: string) => {
+                try { if (existsSync(path)) unlinkSync(path); } catch {}
+                process.stderr.write(`mad service hold: ${why}, unlinked ${path}\n`);
                 process.exit(0);
             };
-            for (const sig of ["SIGHUP", "SIGTERM", "SIGINT", "SIGQUIT", "SIGPIPE"] as const) {
+            // Signal handlers as a courtesy — they fire on graceful sshd
+            // session teardown — but real reliability comes from watching
+            // stdin: when the ssh channel closes, sshd closes our stdin
+            // pipe BEFORE it kills us, so the 'close' event lands ahead of
+            // any SIGKILL.
+            for (const sig of ["SIGHUP", "SIGTERM", "SIGINT", "SIGQUIT"] as const) {
                 process.on(sig, () => cleanup(sig));
             }
-            process.on("exit", (code) => log(`process.exit fired (code=${code})`));
-            // setInterval keeps libuv's event loop alive — bun/node exit
-            // when there are no active handles even with a pending Promise.
-            const keepalive = setInterval(() => {}, 60_000);
-            await new Promise(() => { void keepalive; });
+            process.stdin.on("close", () => cleanup("stdin-close"));
+            process.stdin.on("end", () => cleanup("stdin-end"));
+            process.stdin.resume();
         });
 
     service.command("ping")
