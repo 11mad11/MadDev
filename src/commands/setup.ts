@@ -133,7 +133,6 @@ export async function runSetup(): Promise<void> {
 
     actions.push(ensureDir("/etc/mad", 0o755, undefined));
     actions.push(ensureDir("/etc/mad/ca", 0o700, undefined));
-    actions.push(ensureDir("/etc/mad/groups", 0o755, undefined));
     actions.push(ensureDir("/var/lib/mad", 0o750, { uid: 0, gid: getGroupGid("mad") ?? 0 }));
     actions.push(ensureDir("/run/mad", 0o750, { uid: 0, gid: getGroupGid("mad") ?? 0 }));
     actions.push(ensureDir("/run/mad/groups", 0o755, undefined));

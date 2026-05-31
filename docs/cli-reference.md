@@ -32,7 +32,7 @@ The `Where` column tells you which socket the daemon-side command goes through:
 
 | Command | Where | Notes |
 |---|---|---|
-| `mad group create <name> --owner <user> [--subnet <cidr>]` | mixed | `groupadd`, mkdir, chown setgid, optional bridge if subnet given. |
+| `mad group create <name> [--subnet <cidr>]` | mixed | `groupadd`, mkdir, `chown root:<gid>` + setgid, optional bridge if subnet given. No `--owner` — group dirs are `root:<group>`. |
 | `mad group ls` | n/a | Walks `/run/mad/groups/*`. |
 | `mad group members <name>` | n/a | Parses `getent group <name>`. |
 | `mad group add <group> <user>` | n/a | `usermod -aG <group> <user>`. |

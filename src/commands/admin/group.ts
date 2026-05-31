@@ -1,5 +1,5 @@
 import { createCommand } from "@commander-js/extra-typings";
-import { mkdirSync, chmodSync, chownSync, existsSync, writeFileSync } from "fs";
+import { mkdirSync, chmodSync, chownSync, existsSync } from "fs";
 import { Cmd, cmdDef } from "../../menu";
 import {
     addUserToGroup,
@@ -7,10 +7,8 @@ import {
     createGroup,
     getGroupGid,
     getGroupMembers,
-    getUserUid,
     groupExists,
     removeUserFromGroup,
-    userExists,
 } from "../../groups";
 import { daemon } from "../../daemon/client";
 
@@ -20,43 +18,43 @@ function groupDir(name: string) {
     return `/run/mad/groups/${name}`;
 }
 
-function metaPath(name: string) {
-    return `/etc/mad/groups/${name}.json`;
-}
-
-export async function createGroupAll(name: string, owner: string, subnet?: string) {
+/**
+ * Create or re-bless a mad-managed group:
+ * 1. groupadd if missing
+ * 2. mkdir /run/mad/groups/<name>, chown root:<gid>, chmod 2770
+ * 3. if subnet given, daemon records it in state.json and ensures the bridge
+ *
+ * No /etc/mad/groups/*.json file is written. Linux's /etc/group is the
+ * source of truth for membership; subnets live in state.json with the
+ * other daemon state; everything else is derived from those.
+ */
+export async function createGroupAll(name: string, subnet?: string) {
     assertValidName(name);
-    assertValidName(owner, "user");
-    if (!userExists(owner)) throw new Error(`user does not exist: ${owner}`);
     if (!groupExists(name)) createGroup(name);
-    const dir = groupDir(name);
-    mkdirSync(dir, { recursive: true });
-    const ownerUid = getUserUid(owner);
     const gid = getGroupGid(name);
-    if (ownerUid === undefined || gid === undefined) throw new Error("uid/gid lookup failed");
-    chownSync(dir, ownerUid, gid);
+    if (gid === undefined) throw new Error(`gid lookup failed for ${name}`);
+
+    mkdirSync("/run/mad/groups", { recursive: true });
+    const dir = groupDir(name);
+    if (!existsSync(dir)) mkdirSync(dir);
+    chownSync(dir, 0, gid);
     chmodSync(dir, 0o2770);
-    mkdirSync("/etc/mad/groups", { recursive: true });
-    const meta = { name, owner, subnet: subnet ?? null };
-    writeFileSync(metaPath(name), JSON.stringify(meta, null, 2));
-    chmodSync(metaPath(name), 0o640);
-    if (gid !== undefined) chownSync(metaPath(name), 0, gid);
+
     if (subnet) await daemon.createGroupNetns(name, subnet);
-    return { dir, gid, ownerUid };
+    return { dir, gid };
 }
 
 export const groupCreate = cmdDef({
     perm: isAdmin,
-    cmd: () => createCommand("group-create").summary("Create a group").argument("<name>").argument("<owner>").argument("[subnet]"),
+    cmd: () => createCommand("group-create").summary("Create a group").argument("<name>").argument("[subnet]"),
     async pty(ctx) {
         const name = await ctx.inquirer.input({ message: "Group name" });
-        const owner = await ctx.inquirer.input({ message: "Owner username", default: ctx.username });
         const subnet = await ctx.inquirer.input({ message: "TUN/TAP subnet (optional, e.g. 10.42.0.0/24)", default: "" });
-        return [[name, owner, subnet || undefined], {}] as [[string, string, string | undefined], {}];
+        return [[name, subnet || undefined], {}] as [[string, string | undefined], {}];
     },
-    async run(ctx: any, _opts: any, name: string, owner: string, subnet?: string) {
-        const r = await createGroupAll(name, owner, subnet);
-        ctx.output.write(`created /run/mad/groups/${name} (uid=${r.ownerUid} gid=${r.gid})\n`);
+    async run(ctx: any, _opts: any, name: string, subnet?: string) {
+        const r = await createGroupAll(name, subnet);
+        ctx.output.write(`created /run/mad/groups/${name} (gid=${r.gid})\n`);
     },
 });
 

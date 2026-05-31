@@ -160,10 +160,9 @@ async function main() {
     group.command("create")
         .description("Create a Linux group + /run/mad/groups directory")
         .argument("<name>")
-        .option("--owner <user>", "Owner user", currentUsername())
         .option("--subnet <cidr>", "Optional L2 VPN subnet")
         .action(async (name, opts) => {
-            await createGroupAll(name, opts.owner!, opts.subnet);
+            await createGroupAll(name, opts.subnet);
             process.stdout.write(`created group ${name}\n`);
         });
     group.command("ls")

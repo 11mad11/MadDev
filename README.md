@@ -59,7 +59,7 @@ ssh alice@<server>   # lands in the mad menu
 
 ```sh
 # sysadmin:
-sudo mad group create demo --owner alice --subnet 10.42.0.0/24
+sudo mad group create demo --subnet 10.42.0.0/24
 sudo mad group add demo bob
 ```
 

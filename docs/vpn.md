@@ -16,7 +16,7 @@ If the group wasn't created with `--subnet`, an admin needs to either recreate i
 ```sh
 ssh <admin>@<gw>
 # Menu → Admin → Groups → group-create  (or via CLI)
-ssh <admin>@<gw> group create demo --owner alice --subnet 10.42.0.0/24
+ssh <admin>@<gw> group create demo --subnet 10.42.0.0/24
 ```
 
 This triggers the daemon op `create-group-netns` which sets up the bridge.

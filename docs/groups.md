@@ -5,7 +5,7 @@ What: create groups, list members, add/remove people, delete users.
 
 ## Concepts
 
-- A **group** in mad is a Linux group with a matching `/run/mad/groups/<group>/` directory. The directory ownership is `<owner-user>:<group>`, mode `2770` (setgid). The owner is the user who has "primary" responsibility for the group; usually whoever created it.
+- A **group** in mad is just a **Linux group** with a matching `/run/mad/groups/<group>/` directory. The directory is `root:<group>` mode `2770` (setgid). There's no per-group "owner" — `mad-admin` membership is the central admin role; any member of `<group>` can register sockets there.
 - A user is a **member** if their Linux account is in that group (`/etc/group`). Membership controls:
   - which sockets they can `ssh -R`/`-L` to,
   - whether they can `mad tap join` the group's VPN,
@@ -18,7 +18,7 @@ Interactive: **Admin → Groups → group-create**, supply name, owner username 
 Scripted:
 
 ```sh
-ssh <you>@<gw> group create demo --owner alice --subnet 10.42.0.0/24
+ssh <you>@<gw> group create demo --subnet 10.42.0.0/24
 ```
 
 What happens:
@@ -29,7 +29,7 @@ What happens:
 | `mkdir /run/mad/groups/demo` | runtime dir |
 | `chown alice:demo /run/mad/groups/demo` | ownership |
 | `chmod 2770 /run/mad/groups/demo` | setgid + group rwx |
-| `/etc/mad/groups/demo.json` | persistent metadata |
+| `state.json` `netns[]` entry | persistent subnet metadata (only if `--subnet` given) |
 | daemon op `create-group-netns` | bridge `mad-demo`, gateway IP `10.42.0.1/24` (only if `--subnet` given) |
 
 The subnet is only required if anyone in the group wants `mad tap join`.

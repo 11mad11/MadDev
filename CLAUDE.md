@@ -78,7 +78,8 @@ Thin wrappers over `id`, `getent`, `groupadd`, `groupdel`, `usermod`, `gpasswd`,
 
 ```
 /etc/mad/ca/{ca.key,ca.pub}        # CA material (0400 root:root for the key)
-/etc/mad/groups/<g>.json           # group metadata: owner, subnet
+                                   # (no per-group metadata files — Linux's /etc/group is the source of truth;
+                                   # subnets live in /var/lib/mad/state.json under netns[])
 /run/mad/daemon.sock               # 0660 root:mad
 /run/mad/daemon-root.sock          # 0600 root:root
 /run/mad/groups/<g>/               # 2770 <owner>:<g>; sockets created by ssh -R inherit gid
