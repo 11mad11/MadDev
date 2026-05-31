@@ -218,20 +218,26 @@ function createOtp(req: { username: string }, ctx: HandlerCtx) {
 /**
  * Called from `mad enroll` after the user has already authenticated to
  * sshd (via their OTP-as-password). The daemon trusts SO_PEERCRED for
- * identity, signs the supplied pubkey, drops it into their
- * authorized_keys, and locks the OTP password so it can't be reused.
+ * identity, writes the supplied pubkey into the user's authorized_keys,
+ * and locks the OTP password so it can't be reused.
+ *
+ * We deliberately do NOT mint a cert here — the cert is only useful for
+ * authenticating to other servers (field devices). Users who need one
+ * call `mad cert refresh` themselves later.
  */
 function enrollSelf(req: { pubkey: string }, ctx: HandlerCtx) {
     const username = usernameFromUid(ctx.peer.uid);
     if (!username) throw new Error("unknown caller");
 
-    const { cert, record } = mintCert(req.pubkey, username, ctx);
+    // Parse the pubkey before any mutation so a malformed key fails cleanly.
+    ctx.ca.fingerprint(req.pubkey);
+
     appendAuthorizedKey(username, req.pubkey);
     try { execFileSync("passwd", ["-l", username], { stdio: "ignore" }); } catch {}
 
     ctx.state.otps = ctx.state.otps.filter(o => o.username !== username);
     saveState(ctx.state);
-    return { username, cert, serial: record.serial };
+    return { username };
 }
 
 /**

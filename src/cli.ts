@@ -54,9 +54,19 @@ async function main() {
         });
 
     program.command("enroll")
-        .description("First-time enrollment: pastes your pubkey, signs it, locks the OTP password")
+        .description("First-time enrollment: writes your pubkey to authorized_keys and locks the OTP password")
         .action(async () => {
             await runEnroll();
+        });
+
+    program.command("ssh-config")
+        .description("Print an ssh_config Host block for paste-into-~/.ssh/config")
+        .option("--alias <name>", "Host alias", "mad")
+        .option("--host <hostname>", "Override the gateway hostname")
+        .action(async (opts) => {
+            const { gatewayHost, sshConfigBlock } = await import("./utils/sshConfig");
+            const host = gatewayHost(opts.host);
+            process.stdout.write(sshConfigBlock(opts.alias!, host, currentUsername()));
         });
 
     const ca = program.command("ca");

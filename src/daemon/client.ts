@@ -50,7 +50,7 @@ export const daemon = {
     createOtp(username: string): Promise<{ otp: string; expiresAt: number }> {
         return call({ op: "create-otp", username }, true);
     },
-    enrollSelf(pubkey: string): Promise<{ username: string; cert: string; serial: number }> {
+    enrollSelf(pubkey: string): Promise<{ username: string }> {
         return call({ op: "enroll-self", pubkey });
     },
     caSign(pubkey: string, username: string): Promise<{ cert: string }> {

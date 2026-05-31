@@ -40,11 +40,16 @@ ssh <newuser>@<gw> enroll
 What happens during `ssh <newuser>@<gw> enroll`:
 1. sshd accepts the OTP as your Linux password (`Match Group mad-users` has `PasswordAuthentication yes`).
 2. `Match Group mad-users` → `ForceCommand /usr/bin/mad`. With `SSH_ORIGINAL_COMMAND="enroll"`, mad runs the `enroll` subcommand.
-3. Mad prompts for your pubkey. You paste it. Mad asks the daemon:
-   - Sign the pubkey for you (`mintCert`).
+3. Mad prompts for your pubkey. You paste it. Mad asks the daemon to:
    - Append the pubkey to `/home/<newuser>/.ssh/authorized_keys`.
    - `passwd -l <newuser>` — your OTP password is locked; future logins must use your key.
-4. Mad prints the cert. Save it as `~/.ssh/id_ed25519-cert.pub` on your client (or skip — your pubkey is in `authorized_keys` already, so gateway login works either way; the cert only matters for field-device access).
+4. Mad prints a ready-to-paste `Host mad { … }` block for your `~/.ssh/config`, plus the one-liner you'd run if you ever want a cert (e.g. to reach field devices through the gateway):
+
+```sh
+ssh mad cert refresh < ~/.ssh/id_ed25519.pub > ~/.ssh/id_ed25519-cert.pub
+```
+
+Enrollment does **not** auto-sign a cert. The cert is only needed to reach field devices — gateway login itself uses `authorized_keys`, which is already set. Users who need a cert can mint one any time with `mad cert refresh`.
 
 You can now SSH in as yourself:
 
@@ -56,17 +61,19 @@ ssh <newuser>@<gw>     # → mad menu
 
 | | |
 |---|---|
-| Daemon validates the OTP via PAM | sshd's normal password auth |
-| Daemon validates the pubkey | parsed before any state change (malformed pubkey fails cleanly) |
-| Daemon creates / re-groups the Linux user | `useradd -m -G mad,mad-users` (new) or `usermod -aG mad,mad-users` (existing) |
-| Daemon signs the pubkey | `ssh-keygen -s /etc/mad/ca/ca.key -I user_<u> -n <u>,…groups -z <serial> -V +520w` |
-| Daemon writes authorized_keys | so the user can SSH in without a cert too |
+| sshd authenticates the user via PAM | the OTP IS the user's Linux password during the 15-min window |
+| Daemon validates the pubkey shape | fingerprinted before any state change so a malformed key fails cleanly |
+| Daemon writes the pubkey to authorized_keys | so the user can SSH in by key from now on |
 | Daemon locks the OTP password | `passwd -l <u>` — single-use |
-| OTP record is dropped from state.json | after enrollment, or by the 15-min prune timer |
+| Daemon drops the OTP record from state.json | (or the 60-second prune timer does it on TTL expiry) |
 
-The cert is valid for 10 years by default (`MAD_CERT_VALIDITY_WEEKS=520`). Principals are the user's username plus every mad-group they're in (excluding `mad`, `mad-users`, `mad-admin`).
+Enrollment does **not** issue a cert. The cert is a separate concern — only useful for authenticating to field devices through the gateway. Whenever a user needs one:
 
-The cert is **only needed when authenticating to field devices** — gateway access uses `authorized_keys`. If your cert is lost, stolen, expired, or revoked, you can still SSH into the gateway with just your key, and `mad cert refresh` will mint you a new one immediately.
+```sh
+ssh mad cert refresh < ~/.ssh/id_ed25519.pub > ~/.ssh/id_ed25519-cert.pub
+```
+
+This signs the same pubkey with the user's current group memberships as principals. Default validity is 10 years (`MAD_CERT_VALIDITY_WEEKS=520`).
 
 ## Refreshing your cert (existing user)
 
