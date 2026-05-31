@@ -19,10 +19,6 @@ export const serviceList = cmdDef({
     },
 });
 
-function hostHint(ctx: { username: string }) {
-    return `${ctx.username}@<server>`;
-}
-
 export const serviceRegister = cmdDef({
     perm() { return true; },
     cmd: () => createCommand("service-register").summary("Print ssh -R to register a service"),
@@ -34,7 +30,7 @@ export const serviceRegister = cmdDef({
     },
     async run(ctx, _opts, group, name, target) {
         ctx.output.write(`Run this from the host of the service:\n`);
-        ctx.output.write(`  ssh -R /run/mad/groups/${group}/${name}.sock:${target} ${hostHint(ctx)}\n`);
+        ctx.output.write(`  ssh -R /run/mad/groups/${group}/${name}.sock:${target} mad service hold ${group}/${name}\n`);
     },
 });
 
@@ -49,7 +45,7 @@ export const serviceUse = cmdDef({
     },
     async run(ctx, _opts, group, name, localPort) {
         ctx.output.write(`Run this on the machine that wants the service:\n`);
-        ctx.output.write(`  ssh -L ${localPort}:/run/mad/groups/${group}/${name}.sock ${hostHint(ctx)}\n`);
+        ctx.output.write(`  ssh -L ${localPort}:/run/mad/groups/${group}/${name}.sock mad service ping ${group}/${name}\n`);
     },
 });
 

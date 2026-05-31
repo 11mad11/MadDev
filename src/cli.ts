@@ -235,7 +235,7 @@ async function main() {
         .action((groupname, target) => {
             const [g, n] = groupname.split("/");
             if (!g || !n) throw new Error("expected <group>/<name>");
-            process.stdout.write(`ssh -R /run/mad/groups/${g}/${n}.sock:${target} <server>\n`);
+            process.stdout.write(`ssh -R /run/mad/groups/${g}/${n}.sock:${target} mad service hold ${g}/${n}\n`);
         });
     service.command("use")
         .description("Print the ssh -L command to use a service")
@@ -244,8 +244,55 @@ async function main() {
         .action((groupname, localport) => {
             const [g, n] = groupname.split("/");
             if (!g || !n) throw new Error("expected <group>/<name>");
-            process.stdout.write(`ssh -L ${localport}:/run/mad/groups/${g}/${n}.sock <server>\n`);
+            process.stdout.write(`ssh -L ${localport}:/run/mad/groups/${g}/${n}.sock mad service ping ${g}/${n}\n`);
         });
+    service.command("hold")
+        .description("Hold an ssh -R session and unlink the registered socket on disconnect")
+        .argument("<groupname>", "group/name (the path = /run/mad/groups/<group>/<name>.sock)")
+        .action(async (groupname) => {
+            const [g, n] = groupname.split("/");
+            if (!g || !n) throw new Error("expected <group>/<name>");
+            const path = `/run/mad/groups/${g}/${n}.sock`;
+            const { existsSync, unlinkSync } = await import("fs");
+            const cleanup = (sig: NodeJS.Signals) => {
+                try { if (existsSync(path)) unlinkSync(path); } catch {}
+                process.stderr.write(`mad service hold: ${sig}, unlinked ${path}\n`);
+                process.exit(0);
+            };
+            process.on("SIGHUP", () => cleanup("SIGHUP"));
+            process.on("SIGTERM", () => cleanup("SIGTERM"));
+            process.on("SIGINT", () => cleanup("SIGINT"));
+            await new Promise(() => {});
+        });
+
+    service.command("ping")
+        .description("Check the registered socket is bound; hold while it is. Use with ssh -L instead of -N.")
+        .argument("<groupname>", "group/name")
+        .option("--interval <s>", "Re-check interval in seconds", "5")
+        .action(async (groupname, opts) => {
+            const [g, n] = groupname.split("/");
+            if (!g || !n) throw new Error("expected <group>/<name>");
+            const path = `/run/mad/groups/${g}/${n}.sock`;
+            const { spawnSync } = await import("child_process");
+            const isLive = () => {
+                const r = spawnSync("ss", ["-xlH"], { encoding: "utf-8" });
+                return (r.stdout ?? "").split("\n").some(l => l.includes(path));
+            };
+            if (!isLive()) {
+                process.stderr.write(`mad service ping: ${path} is not bound by any process\n`);
+                process.exit(1);
+            }
+            const intervalMs = Math.max(1, parseInt(opts.interval as string, 10)) * 1000;
+            const t = setInterval(() => {
+                if (!isLive()) {
+                    process.stderr.write(`mad service ping: ${path} disappeared, exiting\n`);
+                    clearInterval(t);
+                    process.exit(1);
+                }
+            }, intervalMs);
+            await new Promise(() => {});
+        });
+
     service.command("install")
         .description("Print install script: auto-forward a local service to mad via systemd")
         .argument("<groupname>", "<group>/<name>")

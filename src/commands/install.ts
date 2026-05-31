@@ -100,10 +100,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 $UNIT_USER
-ExecStart=/usr/bin/ssh -N -R /run/mad/groups/$GROUP/$SVC_NAME.sock:$TARGET \\\\
+ExecStart=/usr/bin/ssh -R /run/mad/groups/$GROUP/$SVC_NAME.sock:$TARGET \\\\
   -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \\\\
   -o ExitOnForwardFailure=yes -o BatchMode=yes \\\\
-  mad
+  mad service hold $GROUP/$SVC_NAME
 Restart=on-failure
 RestartSec=10
 
@@ -346,11 +346,10 @@ Wants=$PROXY_UNIT network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/ssh -N \\\\
-  -R /run/mad/groups/$GROUP/$DEVICE.sock:$PROXY_SOCKET \\\\
+ExecStart=/usr/bin/ssh -R /run/mad/groups/$GROUP/$DEVICE.sock:$PROXY_SOCKET \\\\
   -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \\\\
   -o ExitOnForwardFailure=yes -o BatchMode=yes \\\\
-  mad
+  mad service hold $GROUP/$DEVICE
 Restart=on-failure
 RestartSec=10
 
