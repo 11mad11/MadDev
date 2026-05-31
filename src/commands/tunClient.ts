@@ -134,7 +134,15 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
 
     if (!assigned) throw new Error("no allocation");
     const ourIp = assigned.peerIp;
-    spawnSync("ip", ["addr", "add", ourIp, "dev", localIfname], { stdio: "inherit" });
+    if (mode === "l3") {
+        // /32 with the gateway end as explicit peer — matches the daemon
+        // side and gives us a clean point-to-point route.
+        const ourBase = ourIp.split("/")[0];
+        const peerBase = assigned.ip.split("/")[0];
+        spawnSync("ip", ["addr", "add", `${ourBase}/32`, "peer", `${peerBase}/32`, "dev", localIfname], { stdio: "inherit" });
+    } else {
+        spawnSync("ip", ["addr", "add", ourIp, "dev", localIfname], { stdio: "inherit" });
+    }
 
     // Open the local tap and start pumping length-prefixed frames between
     // it and ssh's stdio. See utils/tapPipe.ts for the framing rationale

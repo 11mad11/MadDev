@@ -140,13 +140,13 @@ function deleteGroupNetns(req: { group: string }, ctx: HandlerCtx) {
  * Pick the next free per-group tap name. Linux ifnames cap at 15 chars,
  * so we squeeze with a per-group counter: tap-<group6>-<seq>.
  */
-function pickTapIfname(group: string, taken: Set<string>): string {
+function pickTapIfname(group: string, taken: Set<string>, prefix: "tap" | "tun"): string {
     const stub = group.slice(0, 6);
     for (let i = 0; i < 1000; i++) {
-        const name = `tap-${stub}-${i}`.slice(0, 15);
+        const name = `${prefix}-${stub}-${i}`.slice(0, 15);
         if (!taken.has(name) && !ipExists(["link", "show", "dev", name])) return name;
     }
-    throw new Error("ran out of tap ifnames");
+    throw new Error(`ran out of ${prefix} ifnames`);
 }
 
 /**
@@ -174,18 +174,14 @@ function tapAllocate(req: { group: string; mode: "l2" | "l3" }, ctx: HandlerCtx)
     if (gid === undefined) throw new Error(`gid lookup failed for ${req.group}`);
 
     const taken = new Set(ctx.state.tuns.map(t => t.ifname));
-    const ifname = pickTapIfname(req.group, taken);
+    const ifname = pickTapIfname(req.group, taken, req.mode === "l2" ? "tap" : "tun");
     const tapType = req.mode === "l2" ? "tap" : "tun";
 
-    // Create a persistent tap OWNED BY THE CALLING USER. With user
-    // ownership set, mad's socat (running as marc, no CAP_NET_ADMIN) can
-    // open /dev/net/tun and TUNSETIFF onto this device directly. That
-    // collapses what was previously two socats + a Unix socket hop into
-    // one socat — the Unix-socket hop was dropping packets and capping
-    // TCP at ~0.4 Mbps.
+    // Persistent tap/tun owned by the calling user, so mad (as marc, no
+    // CAP_NET_ADMIN) can TUNSETIFF on it directly.
     //
-    // pfifo_fast over fq_codel because fq_codel's 5ms AQM target trashes
-    // TCP over a WAN tunnel (~12 drops/s); pfifo_fast just queues until
+    // pfifo_fast over fq_codel: fq_codel's 5ms AQM target trashes TCP
+    // over a WAN tunnel (~12 drops/s); pfifo_fast just queues until
     // txqueuelen.
     ip(["tuntap", "add", "mode", tapType, "user", String(uid), "name", ifname]);
     if (req.mode === "l2") {
@@ -196,7 +192,10 @@ function tapAllocate(req: { group: string; mode: "l2" | "l3" }, ctx: HandlerCtx)
     try { execFileSync("tc", ["qdisc", "replace", "dev", ifname, "root", "pfifo_fast"], { stdio: "ignore" }); } catch {}
 
     // Allocate IPs from the group's subnet. L2: only the client end gets
-    // one (the bridge already has the gateway IP). L3: both ends get one.
+    // an address (the bridge already has the gateway IP, the tap is
+    // bridged into it). L3: gateway and client each get a /32 with the
+    // other as the explicit peer — avoids collision with the bridge's
+    // /24 on the same hub.
     const prefix = netns.subnet.split("/")[1];
     let gatewayIp = "";
     let clientIp = "";
@@ -207,9 +206,13 @@ function tapAllocate(req: { group: string; mode: "l2" | "l3" }, ctx: HandlerCtx)
         const host = netns.nextHost++;
         const peerHost = host + 1;
         netns.nextHost = peerHost + 1;
-        gatewayIp = `${subnetHost(netns.subnet, host)}/${prefix}`;
-        clientIp = `${subnetHost(netns.subnet, peerHost)}/${prefix}`;
-        ip(["addr", "add", gatewayIp, "dev", ifname]);
+        const gw = subnetHost(netns.subnet, host);
+        const cli = subnetHost(netns.subnet, peerHost);
+        gatewayIp = `${gw}/32`;
+        clientIp = `${cli}/32`;
+        // /32 with explicit peer keeps the route point-to-point and out
+        // of the bridge's /24.
+        ip(["addr", "add", `${gw}/32`, "peer", `${cli}/32`, "dev", ifname]);
     }
 
     // No daemon-side socat anymore — the tap is owned by uid, so mad's
