@@ -253,18 +253,26 @@ async function main() {
             const [g, n] = groupname.split("/");
             if (!g || !n) throw new Error("expected <group>/<name>");
             const path = `/run/mad/groups/${g}/${n}.sock`;
-            const { existsSync, unlinkSync } = await import("fs");
+            const { existsSync, unlinkSync, appendFileSync } = await import("fs");
+            const log = (m: string) => {
+                try { appendFileSync(`/tmp/mad-hold-${process.pid}.log`, new Date().toISOString() + " " + m + "\n"); } catch {}
+            };
+            log(`started, path=${path}, ppid=${process.ppid}`);
             const cleanup = (sig: NodeJS.Signals) => {
-                try { if (existsSync(path)) unlinkSync(path); } catch {}
+                log(`signal ${sig} received`);
+                try {
+                    if (existsSync(path)) { unlinkSync(path); log(`unlinked ${path}`); }
+                    else { log(`${path} already gone`); }
+                } catch (e: any) { log(`unlink failed: ${e?.message}`); }
                 process.stderr.write(`mad service hold: ${sig}, unlinked ${path}\n`);
                 process.exit(0);
             };
-            process.on("SIGHUP", () => cleanup("SIGHUP"));
-            process.on("SIGTERM", () => cleanup("SIGTERM"));
-            process.on("SIGINT", () => cleanup("SIGINT"));
-            // A pending promise alone doesn't keep the event loop alive in
-            // bun/node — we need at least one active handle. setInterval
-            // does that without burning CPU.
+            for (const sig of ["SIGHUP", "SIGTERM", "SIGINT", "SIGQUIT", "SIGPIPE"] as const) {
+                process.on(sig, () => cleanup(sig));
+            }
+            process.on("exit", (code) => log(`process.exit fired (code=${code})`));
+            // setInterval keeps libuv's event loop alive — bun/node exit
+            // when there are no active handles even with a pending Promise.
             const keepalive = setInterval(() => {}, 60_000);
             await new Promise(() => { void keepalive; });
         });
