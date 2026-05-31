@@ -19,10 +19,14 @@ Group=mad
 AmbientCapabilities=CAP_NET_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_SETUID CAP_SETGID
 
 # Hardening
+# The daemon shells out to useradd / usermod / chpasswd / passwd to
+# manage Linux accounts during enrollment, and writes to /etc/ssh/mad_krl
+# on every cert revocation. Those tools touch /etc/passwd, /etc/group,
+# /etc/shadow, /etc/gshadow, /etc/subuid, /etc/subgid, /home/*,
+# /var/spool/mail/*, /etc/ssh/. ProtectSystem=strict and
+# ProtectHome=read-only would block all of that; leave them off and rely
+# on the explicit AmbientCapabilities + User=root model instead.
 NoNewPrivileges=no
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/run/mad /var/lib/mad /etc/mad
 PrivateTmp=yes
 
 [Install]
