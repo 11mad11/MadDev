@@ -180,13 +180,21 @@ function tapAllocate(req: { group: string; mode: "l2" | "l3" }, ctx: HandlerCtx)
     // Create the kernel device and attach. ip-tuntap gives us a persistent
     // device with no fd holder; socat will TUNSETIFF on it below. Bump the
     // tx queue length so the kernel doesn't drop frames when the SSH side
-    // is briefly slower than the bridge — defaults to 500 packets.
+    // is briefly slower than the bridge.
+    //
+    // Replace the default fq_codel qdisc with pfifo_fast: fq_codel's AQM
+    // drops packets to keep latency at its 5ms target, which is fine on
+    // a LAN but catastrophic over a high-RTT WAN tunnel (we measured
+    // ~12 drops/s, which destroyed TCP). pfifo_fast just queues until
+    // txqueuelen is hit — TCP's own congestion control then decides
+    // throughput from real loss signals only.
     ip(["tuntap", "add", "mode", tapType, "name", ifname]);
     if (req.mode === "l2") {
         ip(["link", "set", "dev", ifname, "master", bridgeName(req.group)]);
     }
     ip(["link", "set", "dev", ifname, "txqueuelen", "10000"]);
-    ip(["link", "set", "dev", ifname, "up"]);
+    try { ip(["link", "set", "dev", ifname, "up"]); } catch {}
+    try { execFileSync("tc", ["qdisc", "replace", "dev", ifname, "root", "pfifo_fast"], { stdio: "ignore" }); } catch {}
 
     // Allocate IPs from the group's subnet. L2: only the client end gets
     // one (the bridge already has the gateway IP). L3: both ends get one.
