@@ -7,6 +7,7 @@ import { fixedInquirer } from "./utils/inquirer";
 import { currentUid, currentUsername, getCurrentUserGroups } from "./groups";
 import { daemon } from "./daemon/client";
 import { runDaemon } from "./daemon/server";
+import { requireLinuxRoot } from "./utils/platform";
 import { runEnroll } from "./commands/enroll";
 import { runSetup } from "./commands/setup";
 import { runUpdate } from "./commands/update";
@@ -39,18 +40,21 @@ async function main() {
     program.command("daemon")
         .description("Run the privileged daemon (root)")
         .action(async () => {
+            requireLinuxRoot("mad daemon");
             await runDaemon();
         });
 
     program.command("setup")
         .description("Idempotently provision groups, dirs, CA, sshd snippet, and systemd unit (root)")
         .action(async () => {
+            requireLinuxRoot("mad setup");
             await runSetup();
         });
 
     program.command("update")
         .description("git pull + bun install + setup + restart daemon (root)")
         .action(async () => {
+            requireLinuxRoot("mad update");
             await runUpdate();
         });
 
@@ -435,25 +439,63 @@ async function main() {
             }, caResp.pubkey, krlResp.krl));
         });
 
-    const tap = program.command("tap");
-    tap.command("join")
-        .description("Allocate a TAP in a group's L2 network")
+    program.command("tun-attach")
+        .description("Gateway-side glue for `ssh -w 0:0 mad tun-attach <group> <ifname>`")
         .argument("<group>")
-        .action(async (g) => {
-            const r = await daemon.allocateTap(g);
-            process.stdout.write(`${r.ifname}\t${r.ip}\n`);
+        .argument("<ifname>", "tun device created by ssh -w (e.g. tun0)")
+        .action(async (group, ifname) => {
+            // Wait briefly for sshd to finish creating the tun device — `ssh -w`
+            // returns from negotiation before the kernel device shows up.
+            const { spawnSync } = await import("child_process");
+            for (let i = 0; i < 20; i++) {
+                if (spawnSync("ip", ["link", "show", "dev", ifname], { stdio: "ignore" }).status === 0) break;
+                await new Promise(r => setTimeout(r, 100));
+            }
+            const r = await daemon.tunAllocateIp(group, ifname);
+            // Emit a single machine-parseable line on stdout for the client to
+            // read; everything else goes to stderr to keep the protocol clean.
+            process.stdout.write(`MAD_TUN_OK ${r.ifname} ${r.ip} peer=${r.peerIp} group=${r.group}\n`);
+            // Hold the session open. When ssh disconnects the kernel tun device
+            // vanishes; we also call tun-release on the way out so the state
+            // record gets cleaned up immediately rather than waiting for a
+            // future sweep.
+            const cleanup = async () => {
+                try { await daemon.tunRelease(ifname); } catch {}
+                process.exit(0);
+            };
+            process.on("SIGHUP", cleanup);
+            process.on("SIGTERM", cleanup);
+            process.on("SIGINT", cleanup);
+            // Watch ppid like `service hold` does — sshd reaps the session
+            // cgroup, ppid changes (or our process gets SIGKILL'd, in which
+            // case the kernel tun device vanishes anyway and a future sweep
+            // catches the stale state record).
+            const originalPpid = process.ppid;
+            setInterval(() => {
+                if (process.ppid !== originalPpid) cleanup();
+            }, 1000);
         });
-    tap.command("leave")
-        .description("Release the TAP for a group")
-        .argument("<group>")
-        .action(async (g) => {
-            await daemon.releaseTap(g);
+
+    const tun = program.command("tun").description("L3 tunnel from this machine into a group's network via ssh -w");
+    tun.command("join")
+        .description("Open a tun tunnel from this machine into <gateway>/<group> (Linux/macOS, root required)")
+        .argument("<gw/group>", "gateway alias + group name, e.g. mad/marc")
+        .action(async (spec) => {
+            const { tunJoin } = await import("./commands/tunClient");
+            await tunJoin(spec);
         });
-    tap.command("ls")
-        .description("List my TAPs")
+    tun.command("leave")
+        .description("Close a tun tunnel previously opened by `tun join`")
+        .argument("<gw/group>")
+        .action(async (spec) => {
+            const { tunLeave } = await import("./commands/tunClient");
+            await tunLeave(spec);
+        });
+    tun.command("ls")
+        .description("List active tun tunnels on this machine")
         .action(async () => {
-            const taps = await daemon.listTaps();
-            for (const t of taps) process.stdout.write(`${t.group}\t${t.ifname}\t${t.ip}\n`);
+            const { tunList } = await import("./commands/tunClient");
+            await tunList();
         });
 
     program.command("otp")

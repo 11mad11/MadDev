@@ -67,9 +67,11 @@ The `Where` column tells you which socket the daemon-side command goes through:
 
 | Command | Where | Notes |
 |---|---|---|
-| `mad tap join <group>` | user | Allocates `tap-<group>-<uid>`, attaches to `mad-<group>` bridge, returns ifname + IP. |
-| `mad tap leave <group>` | user | `ip link delete` the TAP. |
-| `mad tap ls` | user | Your own TAPs (root sees all). |
+| `mad tun join <gw>/<group>` | client (Linux/macOS, root) | Opens `ssh -w 0:0 <gw> mad tun-attach <group> tunN`, daemon assigns an IP in the group's subnet. Holds the session detached. |
+| `mad tun leave <gw>/<group>` | client | SIGTERM the held SSH; the tun device vanishes; state record cleared. |
+| `mad tun ls` | client | Lists active tun sessions on this machine from `~/.config/mad/tun-state.json`. |
+| `mad gateway add <user@host> [--alias <a>]` | client | Appends a Host block to `~/.ssh/config` with `SetEnv MAD_GATEWAY=1`. |
+| `mad gateway ls / rm <alias> / test <alias>` | client | List / remove / round-trip-ping gateways. |
 
 ## Help
 

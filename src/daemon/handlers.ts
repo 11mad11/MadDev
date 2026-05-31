@@ -3,7 +3,7 @@ import { randomBytes } from "crypto";
 import { writeFileSync, mkdirSync, chmodSync, existsSync, readFileSync, chownSync, appendFileSync, statSync } from "fs";
 import { CA } from "../ca";
 import { assertValidName, getGroupGid, getGroupMembers, getUserGid, getUserGroups, getUserHome, getUserPrimaryGroup, getUserUid, userExists } from "../groups";
-import { CertRecord, DaemonState, GroupNetns, OtpRecord, PeerCred, Request, Response, RevocationRecord, TapRecord } from "./protocol";
+import { CertRecord, DaemonState, GroupNetns, OtpRecord, PeerCred, Request, Response, RevocationRecord, TunRecord } from "./protocol";
 import { saveState } from "./state";
 
 const KRL_PATH = "/etc/ssh/mad_krl";
@@ -92,9 +92,9 @@ function dispatch(req: Request, ctx: HandlerCtx): any {
     switch (req.op) {
         case "create-group-netns": return createGroupNetns(req, ctx);
         case "delete-group-netns": return deleteGroupNetns(req, ctx);
-        case "allocate-tap":       return allocateTap(req, ctx);
-        case "release-tap":        return releaseTap(req, ctx);
-        case "list-taps":          return listTaps(ctx);
+        case "tun-allocate-ip":    return tunAllocateIp(req, ctx);
+        case "tun-release":        return tunRelease(req, ctx);
+        case "list-tuns":          return listTuns(ctx);
         case "create-otp":         return createOtp(req, ctx);
         case "enroll-self":        return enrollSelf(req, ctx);
         case "ca-sign":            return caSign(req, ctx);
@@ -131,57 +131,80 @@ function deleteGroupNetns(req: { group: string }, ctx: HandlerCtx) {
     if (ipExists(["link", "show", "dev", br]))
         ip(["link", "delete", "dev", br]);
     ctx.state.netns = ctx.state.netns.filter(n => n.group !== req.group);
-    ctx.state.taps = ctx.state.taps.filter(t => t.group !== req.group);
+    ctx.state.tuns = ctx.state.tuns.filter(t => t.group !== req.group);
     saveState(ctx.state);
     return {};
 }
 
-function allocateTap(req: { group: string }, ctx: HandlerCtx): TapRecord {
+/**
+ * Called by the gateway-side `mad tun-attach` after sshd has set up the
+ * tun device via `ssh -w`. Daemon picks the next host IP in the group's
+ * subnet, attaches the kernel tun device into the group's bridge, brings
+ * it up, and records the result for future bookkeeping.
+ *
+ * The bridge is the same one TAPs use (`mad-<group>`) — TUN-over-SSH and
+ * legacy TAPs share the bridge until TAP is removed in step 7.
+ */
+function tunAllocateIp(req: { group: string; ifname: string }, ctx: HandlerCtx): TunRecord {
     requireGroup(ctx, req.group);
     const netns = ctx.state.netns.find(n => n.group === req.group);
     if (!netns) throw new Error(`group has no network: ${req.group}`);
+    if (!/^tun\d+$/.test(req.ifname)) throw new Error(`invalid ifname: ${req.ifname}`);
+    if (!ipExists(["link", "show", "dev", req.ifname]))
+        throw new Error(`no kernel device ${req.ifname} — open the ssh -w session first`);
 
     const uid = ctx.peer.uid;
-    const existing = ctx.state.taps.find(t => t.group === req.group && t.uid === uid);
-    if (existing) return existing;
-
     const username = usernameFromUid(uid);
     if (!username) throw new Error("unknown caller");
 
-    const ifname = tapName(req.group, uid);
-    if (ipExists(["link", "show", "dev", ifname]))
-        ip(["link", "delete", "dev", ifname]);
-
-    ip(["tuntap", "add", "mode", "tap", "user", username, "group", req.group, "name", ifname]);
-    ip(["link", "set", "dev", ifname, "master", bridgeName(req.group)]);
-    ip(["link", "set", "dev", ifname, "up"]);
+    // Drop any stale record for this ifname before allocating fresh.
+    ctx.state.tuns = ctx.state.tuns.filter(t => t.ifname !== req.ifname);
 
     const host = netns.nextHost++;
-    const ip4 = `${subnetHost(netns.subnet, host)}/${netns.subnet.split("/")[1]}`;
-    ip(["addr", "add", ip4, "dev", ifname]);
+    const prefix = netns.subnet.split("/")[1];
+    const ip4 = `${subnetHost(netns.subnet, host)}/${prefix}`;
+    const peerHost = host + 1;
+    netns.nextHost = peerHost + 1;
+    const peer4 = `${subnetHost(netns.subnet, peerHost)}/${prefix}`;
 
-    const record: TapRecord = { group: req.group, uid, username, ifname, ip: ip4 };
-    ctx.state.taps.push(record);
+    // Note: `ip link set master <bridge>` requires the device to be a tap
+    // (l2) or a netdev that can bridge. `ssh -w` creates a tun (l3 only)
+    // which cannot be bridged. So instead of bridging, route between the
+    // gateway end and the bridge by giving the gateway end an IP in the
+    // group subnet — packets that should reach other group members get
+    // forwarded by the kernel.
+    ip(["addr", "add", ip4, "dev", req.ifname]);
+    ip(["link", "set", "dev", req.ifname, "up"]);
+
+    const record: TunRecord = {
+        group: req.group,
+        uid, username,
+        ifname: req.ifname,
+        ip: ip4,
+        peerIp: peer4,
+        sshPid: ctx.peer.pid,
+        createdAt: Date.now(),
+    };
+    ctx.state.tuns.push(record);
     saveState(ctx.state);
     return record;
 }
 
-function releaseTap(req: { group: string }, ctx: HandlerCtx) {
-    requireGroup(ctx, req.group);
-    const uid = ctx.peer.uid;
-    const idx = ctx.state.taps.findIndex(t => t.group === req.group && t.uid === uid);
-    if (idx < 0) throw new Error("no tap allocated");
-    const tap = ctx.state.taps[idx];
-    if (ipExists(["link", "show", "dev", tap.ifname]))
-        ip(["link", "delete", "dev", tap.ifname]);
-    ctx.state.taps.splice(idx, 1);
+function tunRelease(req: { ifname: string }, ctx: HandlerCtx) {
+    const record = ctx.state.tuns.find(t => t.ifname === req.ifname);
+    if (!record) return {};
+    if (ctx.peer.uid !== 0 && record.uid !== ctx.peer.uid)
+        throw new Error("not the owner of this tun");
+    if (ipExists(["link", "show", "dev", req.ifname]))
+        try { ip(["link", "delete", "dev", req.ifname]); } catch {}
+    ctx.state.tuns = ctx.state.tuns.filter(t => t.ifname !== req.ifname);
     saveState(ctx.state);
     return {};
 }
 
-function listTaps(ctx: HandlerCtx): TapRecord[] {
-    if (ctx.peer.uid === 0) return ctx.state.taps;
-    return ctx.state.taps.filter(t => t.uid === ctx.peer.uid);
+function listTuns(ctx: HandlerCtx): TunRecord[] {
+    if (ctx.peer.uid === 0) return ctx.state.tuns;
+    return ctx.state.tuns.filter(t => t.uid === ctx.peer.uid);
 }
 
 function createOtp(req: { username: string }, ctx: HandlerCtx) {

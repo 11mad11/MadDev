@@ -1,6 +1,6 @@
 import { createConnection } from "net";
 import { createInterface } from "readline";
-import { CertRecord, DAEMON_ROOT_SOCKET, DAEMON_SOCKET, Request, Response, RevocationRecord, TapRecord } from "./protocol";
+import { CertRecord, DAEMON_ROOT_SOCKET, DAEMON_SOCKET, Request, Response, RevocationRecord, TunRecord } from "./protocol";
 
 function call(req: Request, asRoot = false): Promise<any> {
     const path = asRoot ? DAEMON_ROOT_SOCKET : DAEMON_SOCKET;
@@ -38,14 +38,14 @@ export const daemon = {
     deleteGroupNetns(group: string) {
         return call({ op: "delete-group-netns", group }, true);
     },
-    allocateTap(group: string): Promise<TapRecord> {
-        return call({ op: "allocate-tap", group });
+    tunAllocateIp(group: string, ifname: string): Promise<TunRecord> {
+        return call({ op: "tun-allocate-ip", group, ifname });
     },
-    releaseTap(group: string): Promise<{}> {
-        return call({ op: "release-tap", group });
+    tunRelease(ifname: string): Promise<{}> {
+        return call({ op: "tun-release", ifname });
     },
-    listTaps(): Promise<TapRecord[]> {
-        return call({ op: "list-taps" });
+    listTuns(): Promise<TunRecord[]> {
+        return call({ op: "list-tuns" });
     },
     createOtp(username: string): Promise<{ otp: string; expiresAt: number }> {
         return call({ op: "create-otp", username }, true);

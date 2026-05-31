@@ -5,16 +5,17 @@ import { getGroupGid } from "../groups";
 
 const STATE_PATH = "/var/lib/mad/state.json";
 
-const empty: DaemonState = { taps: [], otps: [], netns: [], nextSerial: 1, certs: [], revoked: [] };
+const empty: DaemonState = { tuns: [], otps: [], netns: [], nextSerial: 1, certs: [], revoked: [] };
 
 export function loadState(): DaemonState {
     if (!existsSync(STATE_PATH))
         return { ...empty };
     try {
         const raw = readFileSync(STATE_PATH, "utf-8");
-        const parsed = JSON.parse(raw) as Partial<DaemonState>;
+        const parsed = JSON.parse(raw) as Partial<DaemonState> & { taps?: unknown };
+        // Legacy `taps[]` field from before TUN-over-SSH replaced TAP is just dropped.
         return {
-            taps: parsed.taps ?? [],
+            tuns: parsed.tuns ?? [],
             otps: parsed.otps ?? [],
             netns: parsed.netns ?? [],
             nextSerial: parsed.nextSerial ?? 1,

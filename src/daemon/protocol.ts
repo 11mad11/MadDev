@@ -10,9 +10,9 @@ export interface PeerCred {
 export type Request =
     | { op: "create-group-netns"; group: string; subnet: string }
     | { op: "delete-group-netns"; group: string }
-    | { op: "allocate-tap"; group: string }
-    | { op: "release-tap"; group: string }
-    | { op: "list-taps" }
+    | { op: "tun-allocate-ip"; group: string; ifname: string }
+    | { op: "tun-release"; ifname: string }
+    | { op: "list-tuns" }
     | { op: "create-otp"; username: string }
     | { op: "enroll-self"; pubkey: string }
     | { op: "ca-sign"; pubkey: string; username: string }
@@ -28,12 +28,15 @@ export type Response =
     | { ok: true; data?: any }
     | { ok: false; error: string };
 
-export interface TapRecord {
+export interface TunRecord {
     group: string;
     uid: number;
     username: string;
-    ifname: string;
-    ip: string;
+    ifname: string;       // The kernel ifname the gateway end attached to (tun0, tun1, …)
+    ip: string;           // CIDR assigned to the gateway end (e.g. "10.42.0.42/24")
+    peerIp: string;       // The client end's address (gateway uses this for the point-to-point)
+    sshPid: number;       // pid of the ssh session that owns the tun device; used for liveness sweeps
+    createdAt: number;
 }
 
 export interface OtpRecord {
@@ -66,7 +69,7 @@ export interface RevocationRecord {
 }
 
 export interface DaemonState {
-    taps: TapRecord[];
+    tuns: TunRecord[];
     otps: OtpRecord[];
     netns: GroupNetns[];
     nextSerial: number;

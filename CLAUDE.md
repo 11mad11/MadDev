@@ -33,7 +33,9 @@ Commander root. Subcommands:
 - `group {create,ls,members,add,rm}` — wraps `groupadd`/`usermod`/`gpasswd`/`getent`.
 - `user {del,forget-keys}` — wraps `userdel` / truncates `~user/.ssh/authorized_keys`.
 - `service {ls,register,use}` — walks `/run/mad/groups/*/` and prints the right `ssh -R` / `ssh -L`.
-- `tap {join,leave,ls}` — talks to the daemon to allocate/release persistent TAPs.
+- `tun {join,leave,ls}` (client; Linux/macOS, root) — opens an `ssh -w 0:0 <gw> mad tun-attach <group> tunN` session, daemon-side mad attaches the tun device into the group's bridge and assigns an IP. Replaces the old gateway-resident `tap`.
+- `gateway {add,ls,rm,test}` (client) — reads/writes `~/.ssh/config` Host blocks marked with `SetEnv MAD_GATEWAY=1`. Multi-gateway `service ls` fans out across these via parallel `ssh <alias> service ls --json`.
+- `tun-attach <group> <ifname>` — gateway-side glue called via SSH_ORIGINAL_COMMAND when a client runs `mad tun join`.
 - `otp <user>` — root-only, asks the daemon to mint an OTP.
 
 Default action (no args): builds a `Ctx` (username, uid, group memberships, stdin/stdout streams, inquirer wrapper) and runs `runMenu(ctx, menu)` from `src/menu.ts`.
@@ -66,9 +68,9 @@ Thin wrappers over `id`, `getent`, `groupadd`, `groupdel`, `usermod`, `gpasswd`,
 ### Operations on the wire
 
 - `create-group-netns` / `delete-group-netns` (root) — create a bridge `mad-<group>` and remember its subnet.
-- `allocate-tap` — create `tap-<group>-<uid>` owned by the calling user, attach to the bridge, assign the next host IP from the subnet. Persistent across CLI exits and daemon restarts.
-- `release-tap` — `ip link delete` the TAP.
-- `list-taps` — filtered to the caller's UID (root sees all).
+- `tun-allocate-ip` — assigns the next host IP from the group's subnet to the gateway side of an existing `ssh -w` tun device, brings it up. Stores a `TunRecord` for cleanup.
+- `tun-release` — `ip link delete` the tun device + drop the state record.
+- `list-tuns` — filtered to the caller's UID (root sees all).
 - `create-otp` (root) — ensures the Linux user exists and is in `mad,mad-users`, generates an 8-digit code, `chpasswd`'s it as the user's Linux password, persists a record with 15-minute TTL. The user authenticates to sshd via that password on their next `ssh user@gw enroll`.
 - `enroll-self` (peer-credentialled) — identifies the caller via `SO_PEERCRED`, signs the supplied pubkey, appends to `authorized_keys`, `passwd -l <user>` to invalidate the OTP. Used by `mad enroll` after sshd already authenticated the user.
 - `ca-sign` (root) — sign an arbitrary pubkey for an arbitrary username (admin tool).
