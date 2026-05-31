@@ -24,7 +24,7 @@
  * errors.
  */
 import { dlopen, FFIType, ptr, suffix } from "bun:ffi";
-import { closeSync, openSync, readSync, writeSync } from "fs";
+import { closeSync, createReadStream, openSync, writeSync } from "fs";
 import type { Readable, Writable } from "stream";
 
 const libc = dlopen(`libc.${suffix}.6`, {
@@ -52,43 +52,29 @@ export function openTap(ifname: string, mode: "l2" | "l3" = "l2"): number {
     const rc = libc.symbols.ioctl(fd, BigInt(TUNSETIFF), ptr(ifreq));
     if (rc !== 0) {
         closeSync(fd);
-        throw new Error(`TUNSETIFF on ${ifname}: ioctl returned ${rc} (errno via Bun.errno: ${(Bun as any).errno ?? "n/a"})`);
+        throw new Error(`TUNSETIFF on ${ifname}: ioctl returned ${rc}`);
     }
     return fd;
 }
 
 /**
  * Read raw frames from the TUN fd and write length-prefixed frames to
- * remoteOut. Each kernel read returns exactly one frame.
+ * remoteOut. Uses createReadStream so reads are non-blocking via libuv;
+ * each TUN read returns exactly one frame from the kernel.
  */
 function pumpTunToRemote(fd: number, remoteOut: Writable): Promise<void> {
     return new Promise((resolve, reject) => {
-        const buf = Buffer.alloc(65536);
-        const lenBuf = Buffer.alloc(2);
-        const loop = () => {
-            try {
-                while (true) {
-                    let n: number;
-                    try { n = readSync(fd, buf, 0, buf.length, null); }
-                    catch (e: any) {
-                        if (e.code === "EAGAIN") { setImmediate(loop); return; }
-                        throw e;
-                    }
-                    if (n === 0) { resolve(); return; }
-                    lenBuf.writeUInt16BE(n, 0);
-                    // Two writes: a length prefix then the body. remoteOut
-                    // is line-buffered? No — it's a binary pipe; back-to-
-                    // back writes coalesce in the kernel.
-                    const ok1 = remoteOut.write(Buffer.from(lenBuf));
-                    const ok2 = remoteOut.write(Buffer.from(buf.subarray(0, n)));
-                    if (!ok1 || !ok2) {
-                        remoteOut.once("drain", loop);
-                        return;
-                    }
-                }
-            } catch (e) { reject(e); }
-        };
-        loop();
+        const stream = createReadStream("" as any, { fd, autoClose: false, highWaterMark: 65536 });
+        stream.on("data", (chunk: Buffer) => {
+            const lenBuf = Buffer.alloc(2);
+            lenBuf.writeUInt16BE(chunk.length, 0);
+            if (!remoteOut.write(Buffer.from(lenBuf)) || !remoteOut.write(Buffer.from(chunk))) {
+                stream.pause();
+                remoteOut.once("drain", () => stream.resume());
+            }
+        });
+        stream.on("end", resolve);
+        stream.on("error", reject);
     });
 }
 
