@@ -85,12 +85,12 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
         process.stderr.write(`ip tuntap add ${localIfname}: ${(tuntapAdd.stderr ?? "").toString().trim()}\n`);
         process.exit(1);
     }
-    spawnSync("ip", ["link", "set", "dev", localIfname, "txqueuelen", "10000"], { stdio: "inherit" });
+    spawnSync("ip", ["link", "set", "dev", localIfname, "txqueuelen", "100"], { stdio: "inherit" });
     spawnSync("ip", ["link", "set", "dev", localIfname, "up"], { stdio: "inherit" });
-    // fq_codel drops aggressively to keep its 5ms latency target; over a
-    // high-RTT tunnel that destroys TCP. pfifo_fast: queue + drop only on
-    // txqueuelen overflow.
-    spawnSync("tc", ["qdisc", "replace", "dev", localIfname, "root", "pfifo_fast"], { stdio: "ignore" });
+    // Small txqueuelen + fq_codel keep latency low under load: the
+    // queue fills fast, AQM trips at 5ms, TCP cwnd shrinks instead of
+    // letting frames pile up in userspace buffers.
+    spawnSync("tc", ["qdisc", "replace", "dev", localIfname, "root", "fq_codel"], { stdio: "ignore" });
 
     // socat does the heavy lifting: spawn ssh, forward stdio↔tap. socat's
     // SYSTEM address opens a child process and pipes; TUN address opens

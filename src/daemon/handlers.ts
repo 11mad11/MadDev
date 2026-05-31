@@ -180,16 +180,20 @@ function tapAllocate(req: { group: string; mode: "l2" | "l3" }, ctx: HandlerCtx)
     // Persistent tap/tun owned by the calling user, so mad (as marc, no
     // CAP_NET_ADMIN) can TUNSETIFF on it directly.
     //
-    // pfifo_fast over fq_codel: fq_codel's 5ms AQM target trashes TCP
-    // over a WAN tunnel (~12 drops/s); pfifo_fast just queues until
-    // txqueuelen.
+    // Small txqueuelen + fq_codel together apply backpressure to the
+    // sender: when the SSH side is slow, the queue fills quickly,
+    // fq_codel's 5ms target trips, and packets get dropped → TCP cwnd
+    // shrinks. Result is shallow queues end-to-end and low RTT under
+    // load. (Earlier this combination broke TCP because socat was
+    // losing frames at the framing layer — now that mad uses
+    // length-prefix framing, drops only happen on real congestion.)
     ip(["tuntap", "add", "mode", tapType, "user", String(uid), "name", ifname]);
     if (req.mode === "l2") {
         ip(["link", "set", "dev", ifname, "master", bridgeName(req.group)]);
     }
-    ip(["link", "set", "dev", ifname, "txqueuelen", "10000"]);
+    ip(["link", "set", "dev", ifname, "txqueuelen", "100"]);
     try { ip(["link", "set", "dev", ifname, "up"]); } catch {}
-    try { execFileSync("tc", ["qdisc", "replace", "dev", ifname, "root", "pfifo_fast"], { stdio: "ignore" }); } catch {}
+    try { execFileSync("tc", ["qdisc", "replace", "dev", ifname, "root", "fq_codel"], { stdio: "ignore" }); } catch {}
 
     // Allocate IPs from the group's subnet. L2: only the client end gets
     // an address (the bridge already has the gateway IP, the tap is
