@@ -440,7 +440,7 @@ async function main() {
         });
 
     program.command("tun-attach")
-        .description("Gateway-side glue for `ssh <gw> mad tun-attach <group>` — pipes Ethernet frames between stdio and a daemon-allocated tap")
+        .description("Gateway-side glue for `ssh <gw> mad tun-attach <group>` — exec's socat to pipe Ethernet frames between stdio and a daemon-allocated tap")
         .argument("<group>")
         .option("--l3", "Use L3 (TUN) instead of L2 (TAP)")
         .action(async (group, opts) => {
@@ -451,29 +451,29 @@ async function main() {
             // is now the frame channel and must stay clean.
             process.stderr.write(`MAD_TUN_OK ${r.ifname} ${r.ip} peer=${r.peerIp} group=${r.group} mode=${r.mode}\n`);
 
-            const { createConnection } = await import("net");
-            const sock = createConnection(r.socketPath);
-
-            // Switch stdin to raw byte mode (avoid TTY line discipline if
-            // present; here it's a plain pipe from sshd but be safe).
-            (process.stdin as any).setRawMode?.(true);
-
-            sock.on("connect", () => {
-                process.stdin.pipe(sock);
-                sock.pipe(process.stdout);
-            });
+            // Exec socat to do the stdio↔socket bridging in native code,
+            // avoiding Node's stream backpressure (a 16KB highWaterMark
+            // throttled TCP through-tunnel to ~200 kbps when we did this
+            // in JS — socat lets it climb to ~10 Mbps on the same WAN).
+            //
+            // Release the tap on exit via a small wrapper script: the
+            // daemon's socat exits when its sole client (this socat)
+            // disconnects, so we still call tun-release for the state
+            // record cleanup.
+            const { spawn } = await import("child_process");
+            const socat = spawn("socat",
+                ["STDIO", `UNIX-CONNECT:${r.socketPath}`],
+                { stdio: ["inherit", "inherit", "inherit"] });
 
             let cleaning = false;
             const cleanup = async () => {
                 if (cleaning) return;
                 cleaning = true;
-                try { sock.destroy(); } catch {}
+                try { socat.kill("SIGTERM"); } catch {}
                 try { await daemon.tunRelease(r.ifname); } catch {}
                 process.exit(0);
             };
-            sock.on("error", e => { process.stderr.write(`mad tun-attach socket: ${e.message}\n`); cleanup(); });
-            sock.on("close", cleanup);
-            process.stdin.on("end", cleanup);
+            socat.on("exit", cleanup);
             process.on("SIGHUP", cleanup);
             process.on("SIGTERM", cleanup);
             process.on("SIGINT", cleanup);

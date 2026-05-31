@@ -178,11 +178,14 @@ function tapAllocate(req: { group: string; mode: "l2" | "l3" }, ctx: HandlerCtx)
     const tapType = req.mode === "l2" ? "tap" : "tun";
 
     // Create the kernel device and attach. ip-tuntap gives us a persistent
-    // device with no fd holder; socat will TUNSETIFF on it below.
+    // device with no fd holder; socat will TUNSETIFF on it below. Bump the
+    // tx queue length so the kernel doesn't drop frames when the SSH side
+    // is briefly slower than the bridge — defaults to 500 packets.
     ip(["tuntap", "add", "mode", tapType, "name", ifname]);
     if (req.mode === "l2") {
         ip(["link", "set", "dev", ifname, "master", bridgeName(req.group)]);
     }
+    ip(["link", "set", "dev", ifname, "txqueuelen", "10000"]);
     ip(["link", "set", "dev", ifname, "up"]);
 
     // Allocate IPs from the group's subnet. L2: only the client end gets
@@ -209,7 +212,10 @@ function tapAllocate(req: { group: string; mode: "l2" | "l3" }, ctx: HandlerCtx)
     const socketPath = `${groupDir}/${ifname}.sock`;
     try { execFileSync("rm", ["-f", socketPath]); } catch {}
 
+    // -b 65536: read up to one TCP-window's worth of frames per read syscall
+    //   instead of the default 8 KB, cutting syscall overhead on hot paths.
     const socatArgs = [
+        "-b", "65536",
         // One client per allocation; exit when it disconnects.
         `UNIX-LISTEN:${socketPath},unlink-early,user=${uid},group=${gid},mode=0660`,
         `TUN,tun-name=${ifname},tun-type=${tapType},iff-no-pi,up`,

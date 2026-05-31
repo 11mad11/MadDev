@@ -78,13 +78,14 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
     const localIfname = nextLocalIfname(ifPrefix);
 
     // Pre-create the local tap; socat below will TUNSETIFF onto it and
-    // become the fd holder. Pre-creating means we can attach to a bridge
-    // later (not needed for client side, but mirrors gateway logic).
+    // become the fd holder. Bump txqueuelen so the kernel doesn't drop
+    // frames when the SSH socket briefly stalls.
     const tuntapAdd = spawnSync("ip", ["tuntap", "add", "mode", ifPrefix, "name", localIfname], { stdio: ["ignore", "ignore", "pipe"] });
     if (tuntapAdd.status !== 0) {
         process.stderr.write(`ip tuntap add ${localIfname}: ${(tuntapAdd.stderr ?? "").toString().trim()}\n`);
         process.exit(1);
     }
+    spawnSync("ip", ["link", "set", "dev", localIfname, "txqueuelen", "10000"], { stdio: "inherit" });
     spawnSync("ip", ["link", "set", "dev", localIfname, "up"], { stdio: "inherit" });
 
     // socat does the heavy lifting: spawn ssh, forward stdio↔tap. socat's
@@ -98,8 +99,10 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
     //   EXEC default: pipes for child stdin/stdout; child stderr inherits
     //   from socat — which we wire to our pipe below, so ssh's "MAD_TUN_OK"
     //   line surfaces in our captured stderr.
-    //   nofork: keep the data-transfer loop in one process (cleaner exits).
+    //   -b 65536: bigger I/O block so we don't syscall every 8 KB on the
+    //   hot frame-forwarding path.
     const socatArgs = [
+        "-b", "65536",
         `EXEC:${JSON.stringify(sshCmd)}`,
         `TUN,tun-name=${localIfname},tun-type=${ifPrefix},iff-no-pi,up`,
     ];
