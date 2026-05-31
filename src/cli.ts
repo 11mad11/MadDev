@@ -262,7 +262,11 @@ async function main() {
             process.on("SIGHUP", () => cleanup("SIGHUP"));
             process.on("SIGTERM", () => cleanup("SIGTERM"));
             process.on("SIGINT", () => cleanup("SIGINT"));
-            await new Promise(() => {});
+            // A pending promise alone doesn't keep the event loop alive in
+            // bun/node — we need at least one active handle. setInterval
+            // does that without burning CPU.
+            const keepalive = setInterval(() => {}, 60_000);
+            await new Promise(() => { void keepalive; });
         });
 
     service.command("ping")
@@ -290,7 +294,8 @@ async function main() {
                     process.exit(1);
                 }
             }, intervalMs);
-            await new Promise(() => {});
+            // setInterval above also keeps the event loop alive.
+            await new Promise(() => { void t; });
         });
 
     service.command("install")
