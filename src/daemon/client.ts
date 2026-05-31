@@ -38,8 +38,8 @@ export const daemon = {
     deleteGroupNetns(group: string) {
         return call({ op: "delete-group-netns", group }, true);
     },
-    tunAllocateIp(group: string, ifname: string): Promise<TunRecord> {
-        return call({ op: "tun-allocate-ip", group, ifname });
+    tapAllocate(group: string, mode: "l2" | "l3"): Promise<TunRecord> {
+        return call({ op: "tap-allocate", group, mode });
     },
     tunRelease(ifname: string): Promise<{}> {
         return call({ op: "tun-release", ifname });

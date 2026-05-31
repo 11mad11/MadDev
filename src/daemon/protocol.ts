@@ -10,7 +10,7 @@ export interface PeerCred {
 export type Request =
     | { op: "create-group-netns"; group: string; subnet: string }
     | { op: "delete-group-netns"; group: string }
-    | { op: "tun-allocate-ip"; group: string; ifname: string }
+    | { op: "tap-allocate"; group: string; mode: "l2" | "l3" }
     | { op: "tun-release"; ifname: string }
     | { op: "list-tuns" }
     | { op: "create-otp"; username: string }
@@ -32,10 +32,12 @@ export interface TunRecord {
     group: string;
     uid: number;
     username: string;
-    ifname: string;       // The kernel ifname the gateway end attached to (tun0, tun1, …)
-    ip: string;           // CIDR assigned to the gateway end (e.g. "10.42.0.42/24")
-    peerIp: string;       // The client end's address (gateway uses this for the point-to-point)
-    sshPid: number;       // pid of the ssh session that owns the tun device; used for liveness sweeps
+    ifname: string;        // The kernel ifname the gateway end is bridged into (tap-stress-2, tun-…)
+    mode: "l2" | "l3";
+    ip: string;            // CIDR assigned to the gateway end ("(bridged)" in L2)
+    peerIp: string;        // CIDR the client end will assign locally (e.g. "10.42.0.43/24")
+    socketPath: string;    // /run/mad/groups/<group>/<ifname>.sock — frames flow here
+    socatPid: number;      // pid of the socat that bridges <socketPath> ↔ <ifname>
     createdAt: number;
 }
 

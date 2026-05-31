@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import chalk from "chalk";
@@ -32,15 +32,10 @@ function nextLocalIfname(prefix: "tap" | "tun"): string {
     const used = new Set(loadState().entries.map(e => e.localIfname));
     for (let i = 0; i < 100; i++) {
         const name = `${prefix}${i}`;
-        if (!used.has(name)) return name;
+        if (!used.has(name) && spawnSync("ip", ["link", "show", "dev", name], { stdio: "ignore" }).status !== 0)
+            return name;
     }
-    throw new Error(`ran out of ${prefix} ifnames (${prefix}0..${prefix}99 all in use)`);
-}
-
-function ifnameNumber(name: string): number {
-    const m = name.match(/^(?:tun|tap)(\d+)$/);
-    if (!m) throw new Error(`bad ifname: ${name}`);
-    return parseInt(m[1], 10);
+    throw new Error(`ran out of ${prefix} ifnames`);
 }
 
 function pidAlive(pid: number): boolean {
@@ -51,12 +46,8 @@ function pidAlive(pid: number): boolean {
 export type TunMode = "l2" | "l3";
 
 export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise<void> {
-    // Windows OpenSSH client doesn't implement -w; refuse early with a
-    // pointer at the workable Windows path (TCP forwarding for direct-IP
-    // games).
     if (process.platform === "win32") {
         process.stderr.write("mad tun join is not yet supported on Windows.\n");
-        process.stderr.write("  Windows OpenSSH client doesn't implement `ssh -w`.\n");
         process.stderr.write("  Workaround for direct-IP P2P games:\n");
         process.stderr.write("    mad service register <group>/<name> localhost:<gamePort>   (host)\n");
         process.stderr.write("    mad service use <gw>/<group>/<name> <gamePort>            (guests)\n");
@@ -71,7 +62,6 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
         process.exit(2);
     }
 
-    // macOS has no native kernel TAP driver; auto-fall-back to L3.
     let mode: TunMode = requestedMode ?? "l2";
     if (mode === "l2" && process.platform === "darwin") {
         if (requestedMode === "l2") {
@@ -86,63 +76,77 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
 
     const ifPrefix: "tap" | "tun" = mode === "l2" ? "tap" : "tun";
     const localIfname = nextLocalIfname(ifPrefix);
-    const tunNum = ifnameNumber(localIfname);
 
-    // ssh -w <local>:<remote>; Tunnel=ethernet picks TAP, point-to-point picks TUN.
-    const sshArgs = [
-        "-w", `${tunNum}:${tunNum}`,
-        "-o", `Tunnel=${mode === "l2" ? "ethernet" : "point-to-point"}`,
-        "-o", "ServerAliveInterval=30",
-        "-o", "ExitOnForwardFailure=yes",
-        gateway,
-        "tun-attach", group, localIfname,
+    // Pre-create the local tap; socat below will TUNSETIFF onto it and
+    // become the fd holder. Pre-creating means we can attach to a bridge
+    // later (not needed for client side, but mirrors gateway logic).
+    const tuntapAdd = spawnSync("ip", ["tuntap", "add", "mode", ifPrefix, "name", localIfname], { stdio: ["ignore", "ignore", "pipe"] });
+    if (tuntapAdd.status !== 0) {
+        process.stderr.write(`ip tuntap add ${localIfname}: ${(tuntapAdd.stderr ?? "").toString().trim()}\n`);
+        process.exit(1);
+    }
+    spawnSync("ip", ["link", "set", "dev", localIfname, "up"], { stdio: "inherit" });
+
+    // socat does the heavy lifting: spawn ssh, forward stdio↔tap. socat's
+    // SYSTEM address opens a child process and pipes; TUN address opens
+    // /dev/net/tun and TUNSETIFFs to the existing local tap.
+    const modeFlag = mode === "l3" ? "--l3" : "";
+    const sshCmd = `ssh -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes ${gateway} mad tun-attach ${group} ${modeFlag}`.trim();
+    const socatArgs = [
+        // -d once: log fatal/error/warn/notice to stderr. We rely on
+        // socat's stderr to surface ssh's stderr (it inherits).
+        "-d",
+        `EXEC:${JSON.stringify(sshCmd)},pty,raw,setsid,stderr`,
+        `TUN,tun-name=${localIfname},tun-type=${ifPrefix},iff-no-pi,up`,
     ];
-
     process.stdout.write(`opening ${ifPrefix} ${localIfname} (${mode === "l2" ? "L2 bridged" : "L3 routed"}) via ssh ${gateway}…\n`);
-    const ssh = spawn("ssh", sshArgs, { stdio: ["pipe", "pipe", "pipe"] });
+    const socat = spawn("socat", socatArgs, { stdio: ["ignore", "ignore", "pipe"] });
 
-    let stdoutBuf = "";
+    // Look for the MAD_TUN_OK line that the gateway-side mad printed to its
+    // stderr. socat's pty/stderr funnel mixes ssh's stderr through socat
+    // back to ours; we parse it here.
+    let stderrBuf = "";
     let assigned: { ip: string; peerIp: string } | null = null;
     await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
-            ssh.kill("SIGTERM");
+            socat.kill("SIGTERM");
             reject(new Error("timed out waiting for gateway to allocate IP"));
-        }, 10_000);
-        ssh.stdout.on("data", (c) => {
-            stdoutBuf += c.toString();
-            const m = stdoutBuf.match(/MAD_TUN_OK\s+\S+\s+(\S+)\s+peer=(\S+)/);
-            if (m) {
+        }, 15_000);
+        socat.stderr.on("data", (c) => {
+            const s = c.toString();
+            stderrBuf += s;
+            process.stderr.write(s);
+            const m = stderrBuf.match(/MAD_TUN_OK\s+\S+\s+(\S+)\s+peer=(\S+)/);
+            if (m && !assigned) {
                 assigned = { ip: m[1], peerIp: m[2] };
                 clearTimeout(timer);
                 resolve();
             }
         });
-        ssh.stderr.on("data", (c) => process.stderr.write(c));
-        ssh.on("exit", (code) => {
+        socat.on("exit", (code) => {
             clearTimeout(timer);
-            if (!assigned) reject(new Error(`ssh exited with code ${code} before allocating IP`));
+            if (!assigned) reject(new Error(`socat exited (${code}) before allocating IP`));
         });
     });
 
     if (!assigned) throw new Error("no allocation");
-    const ourIp = (assigned as any).peerIp;
+    const ourIp = assigned.peerIp;
     spawnSync("ip", ["addr", "add", ourIp, "dev", localIfname], { stdio: "inherit" });
-    spawnSync("ip", ["link", "set", "dev", localIfname, "up"], { stdio: "inherit" });
 
     const state = loadState();
     state.entries.push({
         gateway, group,
         localIfname,
         localIp: ourIp,
-        peerIp: (assigned as any).ip,
-        sshPid: ssh.pid ?? -1,
+        peerIp: assigned.ip,
+        sshPid: socat.pid ?? -1,
         startedAt: Date.now(),
     });
     saveState(state);
 
     process.stdout.write("\n" + chalk.green(`✔ ${gateway}/${group} ${localIfname} ${ourIp} (${mode.toUpperCase()})`) + "\n");
-    process.stdout.write(`  ssh pid ${ssh.pid} — leave with: ${chalk.yellow(`mad tun leave ${gateway}/${group}`)}\n`);
-    ssh.unref();
+    process.stdout.write(`  socat pid ${socat.pid} — leave with: ${chalk.yellow(`mad tun leave ${gateway}/${group}`)}\n`);
+    socat.unref();
 }
 
 export async function tunLeave(gwGroup: string): Promise<void> {
@@ -159,7 +163,6 @@ export async function tunLeave(gwGroup: string): Promise<void> {
         if (pidAlive(e.sshPid)) {
             try { process.kill(e.sshPid, "SIGTERM"); } catch {}
         }
-        // ssh torn down → kernel removes the tun device. Belt-and-suspenders:
         if (process.platform === "linux") {
             spawnSync("ip", ["link", "delete", e.localIfname], { stdio: "ignore" });
         }
@@ -175,7 +178,7 @@ export async function tunList(): Promise<void> {
         process.stdout.write("(no active tun sessions)\n");
         return;
     }
-    process.stdout.write("gateway\tgroup\tifname\tip\tsshPid\tstatus\n");
+    process.stdout.write("gateway\tgroup\tifname\tip\tsocatPid\tstatus\n");
     for (const e of state.entries) {
         const alive = pidAlive(e.sshPid);
         process.stdout.write(`${e.gateway}\t${e.group}\t${e.localIfname}\t${e.localIp}\t${e.sshPid}\t${alive ? "alive" : "dead"}\n`);

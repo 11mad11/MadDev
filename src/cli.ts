@@ -440,36 +440,43 @@ async function main() {
         });
 
     program.command("tun-attach")
-        .description("Gateway-side glue for `ssh -w 0:0 mad tun-attach <group> <ifname>`")
+        .description("Gateway-side glue for `ssh <gw> mad tun-attach <group>` — pipes Ethernet frames between stdio and a daemon-allocated tap")
         .argument("<group>")
-        .argument("<ifname>", "tun device created by ssh -w (e.g. tun0)")
-        .action(async (group, ifname) => {
-            // Wait briefly for sshd to finish creating the tun device — `ssh -w`
-            // returns from negotiation before the kernel device shows up.
-            const { spawnSync } = await import("child_process");
-            for (let i = 0; i < 20; i++) {
-                if (spawnSync("ip", ["link", "show", "dev", ifname], { stdio: "ignore" }).status === 0) break;
-                await new Promise(r => setTimeout(r, 100));
-            }
-            const r = await daemon.tunAllocateIp(group, ifname);
-            // Emit a single machine-parseable line on stdout for the client to
-            // read; everything else goes to stderr to keep the protocol clean.
-            process.stdout.write(`MAD_TUN_OK ${r.ifname} ${r.ip} peer=${r.peerIp} group=${r.group}\n`);
-            // Hold the session open. When ssh disconnects the kernel tun device
-            // vanishes; we also call tun-release on the way out so the state
-            // record gets cleaned up immediately rather than waiting for a
-            // future sweep.
+        .option("--l3", "Use L3 (TUN) instead of L2 (TAP)")
+        .action(async (group, opts) => {
+            const mode: "l2" | "l3" = opts.l3 ? "l3" : "l2";
+            const r = await daemon.tapAllocate(group, mode);
+
+            // Single control line on stderr — the client parses this; stdout
+            // is now the frame channel and must stay clean.
+            process.stderr.write(`MAD_TUN_OK ${r.ifname} ${r.ip} peer=${r.peerIp} group=${r.group} mode=${r.mode}\n`);
+
+            const { createConnection } = await import("net");
+            const sock = createConnection(r.socketPath);
+
+            // Switch stdin to raw byte mode (avoid TTY line discipline if
+            // present; here it's a plain pipe from sshd but be safe).
+            (process.stdin as any).setRawMode?.(true);
+
+            sock.on("connect", () => {
+                process.stdin.pipe(sock);
+                sock.pipe(process.stdout);
+            });
+
+            let cleaning = false;
             const cleanup = async () => {
-                try { await daemon.tunRelease(ifname); } catch {}
+                if (cleaning) return;
+                cleaning = true;
+                try { sock.destroy(); } catch {}
+                try { await daemon.tunRelease(r.ifname); } catch {}
                 process.exit(0);
             };
+            sock.on("error", e => { process.stderr.write(`mad tun-attach socket: ${e.message}\n`); cleanup(); });
+            sock.on("close", cleanup);
+            process.stdin.on("end", cleanup);
             process.on("SIGHUP", cleanup);
             process.on("SIGTERM", cleanup);
             process.on("SIGINT", cleanup);
-            // Watch ppid like `service hold` does — sshd reaps the session
-            // cgroup, ppid changes (or our process gets SIGKILL'd, in which
-            // case the kernel tun device vanishes anyway and a future sweep
-            // catches the stale state record).
             const originalPpid = process.ppid;
             setInterval(() => {
                 if (process.ppid !== originalPpid) cleanup();

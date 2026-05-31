@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "child_process";
+import { execFileSync, spawn, spawnSync } from "child_process";
 import { randomBytes } from "crypto";
 import { writeFileSync, mkdirSync, chmodSync, existsSync, readFileSync, chownSync, appendFileSync, statSync } from "fs";
 import { CA } from "../ca";
@@ -92,7 +92,7 @@ function dispatch(req: Request, ctx: HandlerCtx): any {
     switch (req.op) {
         case "create-group-netns": return createGroupNetns(req, ctx);
         case "delete-group-netns": return deleteGroupNetns(req, ctx);
-        case "tun-allocate-ip":    return tunAllocateIp(req, ctx);
+        case "tap-allocate":       return tapAllocate(req, ctx);
         case "tun-release":        return tunRelease(req, ctx);
         case "list-tuns":          return listTuns(ctx);
         case "create-otp":         return createOtp(req, ctx);
@@ -137,82 +137,99 @@ function deleteGroupNetns(req: { group: string }, ctx: HandlerCtx) {
 }
 
 /**
- * Read /sys/class/net/<ifname>/tun_flags to figure out whether sshd
- * created a TAP (L2 — bit IFF_TAP=0x0002) or a TUN (L3 — IFF_TUN=0x0001).
- * Returns "tap" / "tun" / null. Drives the bridge-vs-route decision below.
+ * Pick the next free per-group tap name. Linux ifnames cap at 15 chars,
+ * so we squeeze with a per-group counter: tap-<group6>-<seq>.
  */
-function detectTunFlavor(ifname: string): "tap" | "tun" | null {
-    try {
-        const raw = readFileSync(`/sys/class/net/${ifname}/tun_flags`, "utf-8").trim();
-        const flags = parseInt(raw, 16);
-        if (!Number.isFinite(flags)) return null;
-        if ((flags & 0x0002) !== 0) return "tap";
-        if ((flags & 0x0001) !== 0) return "tun";
-        return null;
-    } catch { return null; }
+function pickTapIfname(group: string, taken: Set<string>): string {
+    const stub = group.slice(0, 6);
+    for (let i = 0; i < 1000; i++) {
+        const name = `tap-${stub}-${i}`.slice(0, 15);
+        if (!taken.has(name) && !ipExists(["link", "show", "dev", name])) return name;
+    }
+    throw new Error("ran out of tap ifnames");
 }
 
 /**
- * Called by the gateway-side `mad tun-attach` after sshd has set up the
- * tun/tap device via `ssh -w`. Behavior depends on what sshd created:
+ * Allocate a TAP (or TUN, on --l3) device for a client session and start
+ * a `socat` proxy that pumps Ethernet frames between a Unix socket and
+ * the device. The client's mad runs `mad tun-attach` over a regular SSH
+ * exec channel and pipes its stdio to the socket — frames cross the SSH
+ * connection as opaque bytes.
  *
- *  - TAP (L2, `ssh -w … -o Tunnel=ethernet`): bridge the gateway end into
- *    `mad-<group>`. Broadcast / multicast / non-IP traffic flows natively.
- *    The bridge already has the gateway IP; the TAP needs nothing.
- *  - TUN (L3, `Tunnel=point-to-point`): give the gateway end an IP in the
- *    group subnet, kernel routes between this point-to-point and the
- *    bridge. No broadcast.
- *
- * The CLIENT end always gets an IP allocated and returned. In L2 it's
- * "your address on the group LAN"; in L3 it's the remote end of the
- * point-to-point.
+ * This bypasses `ssh -w` entirely, which is what makes mad work on
+ * unprivileged LXC gateways (sshd's per-session uid can't get
+ * CAP_NET_ADMIN — see task #38). The daemon runs as root and has the
+ * capability itself.
  */
-function tunAllocateIp(req: { group: string; ifname: string }, ctx: HandlerCtx): TunRecord {
+function tapAllocate(req: { group: string; mode: "l2" | "l3" }, ctx: HandlerCtx): TunRecord {
     requireGroup(ctx, req.group);
     const netns = ctx.state.netns.find(n => n.group === req.group);
     if (!netns) throw new Error(`group has no network: ${req.group}`);
-    if (!/^(tun|tap)\d+$/.test(req.ifname)) throw new Error(`invalid ifname: ${req.ifname}`);
-    if (!ipExists(["link", "show", "dev", req.ifname]))
-        throw new Error(`no kernel device ${req.ifname} — open the ssh -w session first`);
-
-    const flavor = detectTunFlavor(req.ifname);
-    if (!flavor) throw new Error(`could not detect TAP/TUN flavor for ${req.ifname}`);
+    if (req.mode !== "l2" && req.mode !== "l3") throw new Error("mode must be l2 or l3");
 
     const uid = ctx.peer.uid;
     const username = usernameFromUid(uid);
     if (!username) throw new Error("unknown caller");
+    const gid = getGroupGid(req.group);
+    if (gid === undefined) throw new Error(`gid lookup failed for ${req.group}`);
 
-    ctx.state.tuns = ctx.state.tuns.filter(t => t.ifname !== req.ifname);
+    const taken = new Set(ctx.state.tuns.map(t => t.ifname));
+    const ifname = pickTapIfname(req.group, taken);
+    const tapType = req.mode === "l2" ? "tap" : "tun";
 
+    // Create the kernel device and attach. ip-tuntap gives us a persistent
+    // device with no fd holder; socat will TUNSETIFF on it below.
+    ip(["tuntap", "add", "mode", tapType, "name", ifname]);
+    if (req.mode === "l2") {
+        ip(["link", "set", "dev", ifname, "master", bridgeName(req.group)]);
+    }
+    ip(["link", "set", "dev", ifname, "up"]);
+
+    // Allocate IPs from the group's subnet. L2: only the client end gets
+    // one (the bridge already has the gateway IP). L3: both ends get one.
     const prefix = netns.subnet.split("/")[1];
     let gatewayIp = "";
     let clientIp = "";
-
-    if (flavor === "tap") {
-        ip(["link", "set", "dev", req.ifname, "master", bridgeName(req.group)]);
-        ip(["link", "set", "dev", req.ifname, "up"]);
-        // Gateway end gets no IP — bridge already has one. Client gets the
-        // next host address.
+    if (req.mode === "l2") {
         const host = netns.nextHost++;
         clientIp = `${subnetHost(netns.subnet, host)}/${prefix}`;
     } else {
-        // TUN: point-to-point. Need two IPs in the same subnet.
         const host = netns.nextHost++;
         const peerHost = host + 1;
         netns.nextHost = peerHost + 1;
         gatewayIp = `${subnetHost(netns.subnet, host)}/${prefix}`;
         clientIp = `${subnetHost(netns.subnet, peerHost)}/${prefix}`;
-        ip(["addr", "add", gatewayIp, "dev", req.ifname]);
-        ip(["link", "set", "dev", req.ifname, "up"]);
+        ip(["addr", "add", gatewayIp, "dev", ifname]);
     }
 
+    // Spawn socat to bridge a Unix socket ↔ the tap. socat creates and
+    // chowns the socket; the client mad connects as marc, pipes stdio to it.
+    const groupDir = `/run/mad/groups/${req.group}`;
+    mkdirSync(groupDir, { recursive: true });
+    const socketPath = `${groupDir}/${ifname}.sock`;
+    try { execFileSync("rm", ["-f", socketPath]); } catch {}
+
+    const socatArgs = [
+        // One client per allocation; exit when it disconnects.
+        `UNIX-LISTEN:${socketPath},unlink-early,user=${uid},group=${gid},mode=0660`,
+        `TUN,tun-name=${ifname},tun-type=${tapType},iff-no-pi,up`,
+    ];
+    const socat = spawn("socat", socatArgs, {
+        detached: true,
+        stdio: ["ignore", "ignore", "pipe"],
+    });
+    // Pump socat's stderr to the daemon log for diagnosis.
+    socat.stderr?.on("data", b => console.error(`socat[${ifname}]: ${b.toString().trim()}`));
+    socat.unref();
+    const socatPid = socat.pid ?? -1;
+
     const record: TunRecord = {
-        group: req.group,
-        uid, username,
-        ifname: req.ifname,
-        ip: gatewayIp || `(bridged)`,
+        group: req.group, uid, username, ifname,
+        mode: req.mode,
+        ip: gatewayIp || "(bridged)",
         peerIp: clientIp,
-        sshPid: ctx.peer.pid,
+        socketPath,
+        socatPid,
         createdAt: Date.now(),
     };
     ctx.state.tuns.push(record);
@@ -224,9 +241,13 @@ function tunRelease(req: { ifname: string }, ctx: HandlerCtx) {
     const record = ctx.state.tuns.find(t => t.ifname === req.ifname);
     if (!record) return {};
     if (ctx.peer.uid !== 0 && record.uid !== ctx.peer.uid)
-        throw new Error("not the owner of this tun");
+        throw new Error("not the owner of this tap");
+    if (record.socatPid > 0) {
+        try { process.kill(record.socatPid, "SIGTERM"); } catch {}
+    }
     if (ipExists(["link", "show", "dev", req.ifname]))
         try { ip(["link", "delete", "dev", req.ifname]); } catch {}
+    try { execFileSync("rm", ["-f", record.socketPath]); } catch {}
     ctx.state.tuns = ctx.state.tuns.filter(t => t.ifname !== req.ifname);
     saveState(ctx.state);
     return {};

@@ -14,9 +14,7 @@ Match Group mad-users
     StreamLocalBindMask 0117
     StreamLocalBindUnlink yes
     PasswordAuthentication yes
-    # PermitTunnel yes enables both `ssh -w 0:0 -o Tunnel=ethernet` (L2,
-    # bridged into the group's mad-<group> bridge so broadcast traffic works —
-    # used for LAN-discovery P2P games) and `Tunnel=point-to-point` (L3, IP
-    # routing). Client end requires CAP_NET_ADMIN; gateway side is configured
-    # by `mad tun-attach` via the daemon.
-    PermitTunnel yes
+    # No PermitTunnel: mad uses regular SSH exec channels and a userspace
+    # frame proxy (mad tun-attach + the root daemon's socat) to carry
+    # Ethernet frames over the same SSH connection, which works on
+    # unprivileged LXCs / containers where sshd can't keep CAP_NET_ADMIN.
