@@ -1,0 +1,39 @@
+name: mad-stress
+
+# 3 client containers that ssh out to the real production hub at
+# 167.114.194.173 (alias "mad" in the host's ~/.ssh/config). Each gets
+# its own L2 tap into the `stress` group and runs a mesh-style game-ish
+# workload (TCP + UDP, multi-port, broadcast).
+#
+# Clients have CAP_NET_ADMIN + /dev/net/tun bind-mounted so `ip tuntap
+# add` + socat work in-container. The gateway side runs as the regular
+# `mad daemon` on the hub — no special LXC privileges needed.
+
+x-client: &client
+  build:
+    context: ../..
+    dockerfile: tests/stress/Dockerfile
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  devices:
+    - /dev/net/tun:/dev/net/tun
+  volumes:
+    - ~/.ssh:/host-ssh:ro
+    - ./:/work
+  entrypoint: ["/usr/local/bin/entrypoint-client.sh"]
+  command: ["sleep", "infinity"]
+
+services:
+  c1:
+    <<: *client
+    container_name: mad-stress-c1
+    hostname: c1
+  c2:
+    <<: *client
+    container_name: mad-stress-c2
+    hostname: c2
+  c3:
+    <<: *client
+    container_name: mad-stress-c3
+    hostname: c3
