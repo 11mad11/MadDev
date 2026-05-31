@@ -440,7 +440,7 @@ async function main() {
         });
 
     program.command("tun-attach")
-        .description("Gateway-side glue for `ssh <gw> mad tun-attach <group>` — exec's socat to pipe Ethernet frames between stdio and a daemon-allocated tap")
+        .description("Gateway-side glue for `ssh <gw> mad tun-attach <group>` — exec's socat to pipe Ethernet frames between stdio and a marc-owned tap")
         .argument("<group>")
         .option("--l3", "Use L3 (TUN) instead of L2 (TAP)")
         .action(async (group, opts) => {
@@ -451,18 +451,15 @@ async function main() {
             // is now the frame channel and must stay clean.
             process.stderr.write(`MAD_TUN_OK ${r.ifname} ${r.ip} peer=${r.peerIp} group=${r.group} mode=${r.mode}\n`);
 
-            // Exec socat to do the stdio↔socket bridging in native code,
-            // avoiding Node's stream backpressure (a 16KB highWaterMark
-            // throttled TCP through-tunnel to ~200 kbps when we did this
-            // in JS — socat lets it climb to ~10 Mbps on the same WAN).
-            //
-            // Release the tap on exit via a small wrapper script: the
-            // daemon's socat exits when its sole client (this socat)
-            // disconnects, so we still call tun-release for the state
-            // record cleanup.
+            // The daemon created the tap and chowned it to us, so socat can
+            // TUNSETIFF directly without CAP_NET_ADMIN. Going stdio↔tap in
+            // one socat (instead of stdio↔unix-socket↔socat↔tap as before)
+            // removed the Unix-socket choke point that was capping TCP at
+            // ~0.4 Mbps.
+            const tunType = r.mode === "l2" ? "tap" : "tun";
             const { spawn } = await import("child_process");
             const socat = spawn("socat",
-                ["STDIO", `UNIX-CONNECT:${r.socketPath}`],
+                ["-b", "65536", "STDIO", `TUN,tun-name=${r.ifname},tun-type=${tunType},iff-no-pi`],
                 { stdio: ["inherit", "inherit", "inherit"] });
 
             let cleaning = false;

@@ -177,18 +177,17 @@ function tapAllocate(req: { group: string; mode: "l2" | "l3" }, ctx: HandlerCtx)
     const ifname = pickTapIfname(req.group, taken);
     const tapType = req.mode === "l2" ? "tap" : "tun";
 
-    // Create the kernel device and attach. ip-tuntap gives us a persistent
-    // device with no fd holder; socat will TUNSETIFF on it below. Bump the
-    // tx queue length so the kernel doesn't drop frames when the SSH side
-    // is briefly slower than the bridge.
+    // Create a persistent tap OWNED BY THE CALLING USER. With user
+    // ownership set, mad's socat (running as marc, no CAP_NET_ADMIN) can
+    // open /dev/net/tun and TUNSETIFF onto this device directly. That
+    // collapses what was previously two socats + a Unix socket hop into
+    // one socat — the Unix-socket hop was dropping packets and capping
+    // TCP at ~0.4 Mbps.
     //
-    // Replace the default fq_codel qdisc with pfifo_fast: fq_codel's AQM
-    // drops packets to keep latency at its 5ms target, which is fine on
-    // a LAN but catastrophic over a high-RTT WAN tunnel (we measured
-    // ~12 drops/s, which destroyed TCP). pfifo_fast just queues until
-    // txqueuelen is hit — TCP's own congestion control then decides
-    // throughput from real loss signals only.
-    ip(["tuntap", "add", "mode", tapType, "name", ifname]);
+    // pfifo_fast over fq_codel because fq_codel's 5ms AQM target trashes
+    // TCP over a WAN tunnel (~12 drops/s); pfifo_fast just queues until
+    // txqueuelen.
+    ip(["tuntap", "add", "mode", tapType, "user", String(uid), "name", ifname]);
     if (req.mode === "l2") {
         ip(["link", "set", "dev", ifname, "master", bridgeName(req.group)]);
     }
@@ -213,37 +212,16 @@ function tapAllocate(req: { group: string; mode: "l2" | "l3" }, ctx: HandlerCtx)
         ip(["addr", "add", gatewayIp, "dev", ifname]);
     }
 
-    // Spawn socat to bridge a Unix socket ↔ the tap. socat creates and
-    // chowns the socket; the client mad connects as marc, pipes stdio to it.
-    const groupDir = `/run/mad/groups/${req.group}`;
-    mkdirSync(groupDir, { recursive: true });
-    const socketPath = `${groupDir}/${ifname}.sock`;
-    try { execFileSync("rm", ["-f", socketPath]); } catch {}
-
-    // -b 65536: read up to one TCP-window's worth of frames per read syscall
-    //   instead of the default 8 KB, cutting syscall overhead on hot paths.
-    const socatArgs = [
-        "-b", "65536",
-        // One client per allocation; exit when it disconnects.
-        `UNIX-LISTEN:${socketPath},unlink-early,user=${uid},group=${gid},mode=0660`,
-        `TUN,tun-name=${ifname},tun-type=${tapType},iff-no-pi,up`,
-    ];
-    const socat = spawn("socat", socatArgs, {
-        detached: true,
-        stdio: ["ignore", "ignore", "pipe"],
-    });
-    // Pump socat's stderr to the daemon log for diagnosis.
-    socat.stderr?.on("data", b => console.error(`socat[${ifname}]: ${b.toString().trim()}`));
-    socat.unref();
-    const socatPid = socat.pid ?? -1;
-
+    // No daemon-side socat anymore — the tap is owned by uid, so mad's
+    // own socat can attach to it directly. socketPath/socatPid stay in
+    // the record for backward state-file compat but go unused on this path.
     const record: TunRecord = {
         group: req.group, uid, username, ifname,
         mode: req.mode,
         ip: gatewayIp || "(bridged)",
         peerIp: clientIp,
-        socketPath,
-        socatPid,
+        socketPath: "",
+        socatPid: -1,
         createdAt: Date.now(),
     };
     ctx.state.tuns.push(record);
@@ -256,12 +234,8 @@ function tunRelease(req: { ifname: string }, ctx: HandlerCtx) {
     if (!record) return {};
     if (ctx.peer.uid !== 0 && record.uid !== ctx.peer.uid)
         throw new Error("not the owner of this tap");
-    if (record.socatPid > 0) {
-        try { process.kill(record.socatPid, "SIGTERM"); } catch {}
-    }
     if (ipExists(["link", "show", "dev", req.ifname]))
         try { ip(["link", "delete", "dev", req.ifname]); } catch {}
-    try { execFileSync("rm", ["-f", record.socketPath]); } catch {}
     ctx.state.tuns = ctx.state.tuns.filter(t => t.ifname !== req.ifname);
     saveState(ctx.state);
     return {};
