@@ -94,11 +94,13 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
     // (ForceCommand prepends the binary path itself).
     const modeFlag = mode === "l3" ? "--l3" : "";
     const sshCmd = `ssh -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes ${gateway} tun-attach ${group} ${modeFlag}`.trim();
+    // socat options:
+    //   EXEC default: pipes for child stdin/stdout; child stderr inherits
+    //   from socat — which we wire to our pipe below, so ssh's "MAD_TUN_OK"
+    //   line surfaces in our captured stderr.
+    //   nofork: keep the data-transfer loop in one process (cleaner exits).
     const socatArgs = [
-        // -d once: log fatal/error/warn/notice to stderr. We rely on
-        // socat's stderr to surface ssh's stderr (it inherits).
-        "-d",
-        `EXEC:${JSON.stringify(sshCmd)},pty,raw,setsid,stderr`,
+        `EXEC:${JSON.stringify(sshCmd)}`,
         `TUN,tun-name=${localIfname},tun-type=${ifPrefix},iff-no-pi,up`,
     ];
     process.stdout.write(`opening ${ifPrefix} ${localIfname} (${mode === "l2" ? "L2 bridged" : "L3 routed"}) via ssh ${gateway}…\n`);
@@ -174,14 +176,17 @@ export async function tunLeave(gwGroup: string): Promise<void> {
     saveState(state);
 }
 
-export async function tunList(): Promise<void> {
+export async function tunList(filter?: "tap" | "tun"): Promise<void> {
     const state = loadState();
-    if (state.entries.length === 0) {
-        process.stdout.write("(no active tun sessions)\n");
+    const entries = filter
+        ? state.entries.filter(e => e.localIfname.startsWith(filter))
+        : state.entries;
+    if (entries.length === 0) {
+        process.stdout.write(`(no active ${filter ?? "tun/tap"} sessions)\n`);
         return;
     }
     process.stdout.write("gateway\tgroup\tifname\tip\tsocatPid\tstatus\n");
-    for (const e of state.entries) {
+    for (const e of entries) {
         const alive = pidAlive(e.sshPid);
         process.stdout.write(`${e.gateway}\t${e.group}\t${e.localIfname}\t${e.localIp}\t${e.sshPid}\t${alive ? "alive" : "dead"}\n`);
     }

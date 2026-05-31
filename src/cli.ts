@@ -483,27 +483,53 @@ async function main() {
             }, 1000);
         });
 
-    const tun = program.command("tun").description("L2/L3 tunnel from this machine into a group's network via ssh -w");
-    tun.command("join")
-        .description("Open a tun/tap tunnel into <gateway>/<group> — L2 by default (Linux/macOS, root required)")
+    // L2 (TAP) — bridged into mad-<group>, carries broadcast/ARP/non-IP.
+    // The right choice for Hamachi-style LAN game lobbies (game-discovery
+    // broadcast packets cross peers).
+    const tap = program.command("tap").description("L2 (TAP) tunnel from this machine into a group's bridge");
+    tap.command("join")
+        .description("Open an L2 TAP tunnel into <gateway>/<group> (Linux/macOS, root required)")
         .argument("<gw/group>", "gateway alias + group name, e.g. mad/marc")
-        .option("--l3", "Force L3 mode (point-to-point TUN, no broadcast). Default is L2 (TAP, bridged, carries broadcast/ARP — needed for LAN-discovery P2P games).")
-        .action(async (spec, opts) => {
+        .action(async (spec) => {
             const { tunJoin } = await import("./commands/tunClient");
-            await tunJoin(spec, opts.l3 ? "l3" : "l2");
+            await tunJoin(spec, "l2");
+        });
+    tap.command("leave")
+        .description("Close a TAP tunnel previously opened by `tap join`")
+        .argument("<gw/group>")
+        .action(async (spec) => {
+            const { tunLeave } = await import("./commands/tunClient");
+            await tunLeave(spec);
+        });
+    tap.command("ls")
+        .description("List active TAP tunnels on this machine")
+        .action(async () => {
+            const { tunList } = await import("./commands/tunClient");
+            await tunList("tap");
+        });
+
+    // L3 (TUN) — point-to-point, IP-only, no broadcast. Lighter overhead
+    // when broadcast isn't needed (or on macOS, which has no kernel TAP).
+    const tun = program.command("tun").description("L3 (TUN) point-to-point tunnel into a group's network");
+    tun.command("join")
+        .description("Open an L3 TUN tunnel into <gateway>/<group> (Linux/macOS, root required)")
+        .argument("<gw/group>")
+        .action(async (spec) => {
+            const { tunJoin } = await import("./commands/tunClient");
+            await tunJoin(spec, "l3");
         });
     tun.command("leave")
-        .description("Close a tun tunnel previously opened by `tun join`")
+        .description("Close a TUN tunnel previously opened by `tun join`")
         .argument("<gw/group>")
         .action(async (spec) => {
             const { tunLeave } = await import("./commands/tunClient");
             await tunLeave(spec);
         });
     tun.command("ls")
-        .description("List active tun tunnels on this machine")
+        .description("List active TUN tunnels on this machine")
         .action(async () => {
             const { tunList } = await import("./commands/tunClient");
-            await tunList();
+            await tunList("tun");
         });
 
     program.command("otp")
