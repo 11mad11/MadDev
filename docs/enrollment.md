@@ -1,7 +1,7 @@
 # Enrolling a user (OTP-as-password flow)
 
 Who: a `mad-admin` (or root) on the gateway, plus the new user with `ssh` on their machine.
-What: hand the new user an OTP, they trade it for a signed SSH cert AND a key in their `authorized_keys`.
+What: hand the new user an OTP, they trade it for their pubkey landing in `authorized_keys` on the gateway. (A signed cert is a separate, on-demand operation — see `mad cert refresh`.)
 
 ## How the flow works
 

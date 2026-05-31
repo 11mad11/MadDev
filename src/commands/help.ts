@@ -1,36 +1,94 @@
-import chalk from 'chalk';
 import { createCommand } from "@commander-js/extra-typings";
-import { Cmd, cmdDef } from "../menu";
-import { prettyTerm } from '../utils/term';
+import { existsSync, readFileSync, readdirSync } from "fs";
+import { dirname, join, resolve } from "path";
+import chalk from "chalk";
+import { Cmd, MenuNodeParent, cmdDef, cmdMenu } from "../menu";
+import { renderMarkdown } from "../utils/markdown";
 
-export default cmdDef({
-    perm() {
-        return true;
-    },
-    cmd: () => createCommand("help").summary("Help"),
-    async pty() {
-        return [[] as const, {}];
-    },
-    async run({ output }) {
-        const { cmd, h1, h2, line } = prettyTerm(output);
+/**
+ * Walk up from this file until we find a package.json, then resolve docs/
+ * relative to that. Works both under `bun run /opt/mad/src/cli.ts` and
+ * under `tsx`/development.
+ */
+function docsDir(): string {
+    let dir = resolve(import.meta.dir ?? dirname(process.argv[1] ?? "."));
+    for (let i = 0; i < 8; i++) {
+        if (existsSync(join(dir, "package.json")) && existsSync(join(dir, "docs"))) return join(dir, "docs");
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    return "/opt/mad/docs";
+}
 
-        h1("== mad ==");
-        line("mad runs as your login program; system sshd handles auth via certs signed by mad's CA.");
+function topicPath(topic: string): string {
+    const safe = topic.replace(/[^a-z0-9-]/gi, "");
+    return join(docsDir(), `${safe}.md`);
+}
 
-        h2("Enroll a new user (sysadmin)");
-        cmd("sudo mad otp " + chalk.white.underline("username"));
-        line("Mad creates the Linux user, adds them to mad-users, and sets the OTP as their password.");
-        line("Hand the OTP to the user. They then run, from their client:");
-        cmd("ssh " + chalk.white.underline("username") + "@" + chalk.white.underline("server") + " enroll");
-        line("…and paste their pubkey. Mad signs it, writes authorized_keys, and locks the OTP password.");
+function listTopics(): string[] {
+    try {
+        return readdirSync(docsDir())
+            .filter(f => f.endsWith(".md") && f !== "README.md")
+            .map(f => f.replace(/\.md$/, ""))
+            .sort();
+    } catch { return []; }
+}
 
-        h2("Register a TCP service for a group");
-        cmd("ssh -R /run/mad/groups/" + chalk.white.underline("group") + "/" + chalk.white.underline("name") + ".sock:localhost:" + chalk.white.underline("port") + " server");
+function renderTopic(topic: string | undefined, output: NodeJS.WritableStream): void {
+    const path = topic ? topicPath(topic) : join(docsDir(), "README.md");
+    if (!existsSync(path)) {
+        output.write(chalk.red(`No help topic '${topic}'.`) + "\n\nAvailable:\n");
+        for (const t of listTopics()) output.write("  - " + t + "\n");
+        return;
+    }
+    output.write("\n" + renderMarkdown(readFileSync(path, "utf-8")) + "\n");
+}
 
-        h2("Use a TCP service from a group you belong to");
-        cmd("ssh -L " + chalk.white.underline("localport") + ":/run/mad/groups/" + chalk.white.underline("group") + "/" + chalk.white.underline("name") + ".sock server");
+// Top-level menu entry — Overview / index page.
+const helpIndex: Cmd = cmdDef({
+    perm() { return true; },
+    cmd: () => createCommand("overview").summary("Overview (index)"),
+    async pty() { return [[] as const, {}]; },
+    async run(ctx) { renderTopic(undefined, ctx.output); },
+});
 
-        h2("Join a group's L2 VPN");
-        cmd("mad tap join " + chalk.white.underline("group"));
-    },
-} satisfies Cmd);
+// Friendly menu titles per topic file (falls back to the bare filename).
+const TOPIC_TITLES: Record<string, string> = {
+    install: "Installing the gateway",
+    enrollment: "Enrolling a user",
+    groups: "Managing groups and users",
+    forwarding: "TCP service forwarding",
+    "field-devices": "Sharing field devices",
+    vpn: "L2 VPN per group",
+    ca: "The mad CA",
+    revocation: "Revocation",
+    "cli-reference": "CLI reference",
+};
+
+function topicCmd(topic: string): Cmd {
+    return cmdDef({
+        perm() { return true; },
+        cmd: () => createCommand(topic).summary(TOPIC_TITLES[topic] ?? topic),
+        async pty() { return [[] as const, {}]; },
+        async run(ctx) { renderTopic(topic, ctx.output); },
+    });
+}
+
+const helpMenu: MenuNodeParent = cmdMenu({
+    text: "Help",
+    children: [helpIndex, ...Object.keys(TOPIC_TITLES).map(topicCmd)],
+});
+
+export default helpMenu;
+
+/**
+ * Exported for cli.ts so `mad help [topic]` works programmatically (the
+ * menu's runExec doesn't currently surface sub-menu children as
+ * sub-subcommands, so this is a flat wrapper for CLI use).
+ */
+export function runHelpCli(topic: string | undefined): void {
+    renderTopic(topic, process.stdout);
+}
+
+export function helpTopics(): string[] { return listTopics(); }

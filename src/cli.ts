@@ -2,6 +2,7 @@ import { Command } from "@commander-js/extra-typings";
 import { readFileSync, mkdirSync, chmodSync, writeFileSync, existsSync } from "fs";
 import menu from "./commands";
 import { runMenu, runExec, Ctx } from "./menu";
+import { runHelpCli, helpTopics } from "./commands/help";
 import { fixedInquirer } from "./utils/inquirer";
 import { currentUid, currentUsername, getCurrentUserGroups } from "./groups";
 import { daemon } from "./daemon/client";
@@ -58,6 +59,11 @@ async function main() {
         .action(async () => {
             await runEnroll();
         });
+
+    program.command("help")
+        .description("Render a doc page in the terminal")
+        .argument("[topic]", "doc file under docs/ (omit for the index)")
+        .action((topic) => runHelpCli(topic));
 
     program.command("ssh-config")
         .description("Print an ssh_config Host block for paste-into-~/.ssh/config")
