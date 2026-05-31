@@ -59,16 +59,22 @@ export function openTap(ifname: string, mode: "l2" | "l3" = "l2"): number {
 
 /**
  * Read raw frames from the TUN fd and write length-prefixed frames to
- * remoteOut. Uses createReadStream so reads are non-blocking via libuv;
- * each TUN read returns exactly one frame from the kernel.
+ * remoteOut. createReadStream gives us non-blocking reads via libuv;
+ * each TUN read returns exactly one frame.
+ *
+ * Backpressure: highWaterMark is sized for one MTU-ish frame, so the
+ * stream stops reading the moment ssh's stdin can't keep up. Combining
+ * the 2-byte prefix and the body into one write keeps Node's queue
+ * from inflating with tiny prefix buffers.
  */
 function pumpTunToRemote(fd: number, remoteOut: Writable): Promise<void> {
     return new Promise((resolve, reject) => {
-        const stream = createReadStream("" as any, { fd, autoClose: false, highWaterMark: 65536 });
+        const stream = createReadStream("" as any, { fd, autoClose: false, highWaterMark: 2048 });
         stream.on("data", (chunk: Buffer) => {
-            const lenBuf = Buffer.alloc(2);
-            lenBuf.writeUInt16BE(chunk.length, 0);
-            if (!remoteOut.write(Buffer.from(lenBuf)) || !remoteOut.write(Buffer.from(chunk))) {
+            const out = Buffer.allocUnsafe(2 + chunk.length);
+            out.writeUInt16BE(chunk.length, 0);
+            chunk.copy(out, 2);
+            if (!remoteOut.write(out)) {
                 stream.pause();
                 remoteOut.once("drain", () => stream.resume());
             }
