@@ -36,11 +36,6 @@ function ensureGroup(name: string): Action {
     return note(true, `created group ${name}`);
 }
 
-function ensureOtpUser(): Action {
-    if (userExists("otp")) return note(false, "user otp exists");
-    execFileSync("useradd", ["-m", "-s", "/usr/sbin/nologin", "-G", "mad", "otp"], { stdio: "inherit" });
-    return note(true, "created user otp");
-}
 
 function ensureDir(path: string, mode: number, owner: { uid: number; gid: number } | undefined): Action {
     let changed = false;
@@ -135,7 +130,6 @@ export async function runSetup(): Promise<void> {
 
     const actions: Action[] = [];
     for (const g of REQUIRED_GROUPS) actions.push(ensureGroup(g));
-    actions.push(ensureOtpUser());
 
     actions.push(ensureDir("/etc/mad", 0o755, undefined));
     actions.push(ensureDir("/etc/mad/ca", 0o700, undefined));

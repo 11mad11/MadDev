@@ -14,7 +14,7 @@ export type Request =
     | { op: "release-tap"; group: string }
     | { op: "list-taps" }
     | { op: "create-otp"; username: string }
-    | { op: "consume-otp"; otp: string; pubkey: string }
+    | { op: "enroll-self"; pubkey: string }
     | { op: "ca-sign"; pubkey: string; username: string }
     | { op: "ca-pubkey" }
     | { op: "ca-krl" }

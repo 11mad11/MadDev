@@ -54,7 +54,7 @@ async function main() {
         });
 
     program.command("enroll")
-        .description("OTP-driven enrollment (sshd ForceCommand for the otp user)")
+        .description("First-time enrollment: pastes your pubkey, signs it, locks the OTP password")
         .action(async () => {
             await runEnroll();
         });

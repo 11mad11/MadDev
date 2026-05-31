@@ -25,7 +25,6 @@ What `mad setup` does:
 | Step | Where | Detail |
 |---|---|---|
 | Create groups | `/etc/group` | `mad`, `mad-users`, `mad-admin` |
-| Create the `otp` Linux user | `/etc/passwd` | shell `/usr/sbin/nologin`, member of `mad` |
 | Make dirs | `/etc/mad/{ca,groups}`, `/var/lib/mad`, `/run/mad/groups` | proper modes and ownership |
 | Materialize CA | `/etc/mad/ca/ca.key` (0400 root) | ed25519, generated on first run |
 | Publish CA pubkey | `/etc/ssh/mad_ca.pub` | what `TrustedUserCAKeys` reads |
@@ -43,33 +42,19 @@ Roughly (see `/etc/ssh/sshd_config.d/99-mad.conf` after setup):
 
 ```
 TrustedUserCAKeys /etc/ssh/mad_ca.pub
-AllowStreamLocalForwarding all
-StreamLocalBindUnlink yes
+RevokedKeys /etc/ssh/mad_krl
 
 Match Group mad-users
     ForceCommand /usr/bin/mad
     AllowStreamLocalForwarding all
     StreamLocalBindMask 0117
     StreamLocalBindUnlink yes
-
-Match User otp
-    AuthenticationMethods none
-    PermitEmptyPasswords yes
-    ForceCommand /usr/bin/mad enroll
-    AllowTcpForwarding no
-    AllowStreamLocalForwarding no
-    PermitTTY yes
+    PasswordAuthentication yes
 ```
 
-Members of `mad-users` who SSH in land directly in the mad menu (no shell). The `otp` user is the public on-ramp for enrollment — it accepts unauthenticated connections and immediately runs `mad enroll`.
+Members of `mad-users` land in the mad menu (no shell). `PasswordAuthentication yes` is required because the enrollment flow uses a 15-minute Linux password as the OTP — see [enrollment.md](enrollment.md). Once a user enrolls, the daemon locks their password (`passwd -l`), so subsequent logins are cert / pubkey only.
 
-Known deployment gotcha: many distros' default PAM config rejects empty passwords. If `ssh otp@server` fails before reaching `mad enroll`, add to `/etc/pam.d/sshd`:
-
-```
-auth sufficient pam_succeed_if.so user = otp quiet
-```
-
-…above the standard `@include common-auth` line.
+No PAM tweak required: this uses the standard PAM password path, not a `none` / `PermitEmptyPasswords` workaround.
 
 ## Updating
 

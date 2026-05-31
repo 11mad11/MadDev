@@ -4,7 +4,8 @@ import { dirname } from "path";
 import { createInterface } from "readline";
 import { CA } from "../ca";
 import { getGroupGid } from "../groups";
-import { handle, writeKrlFile } from "./handlers";
+import { handle, pruneOtps, writeKrlFile } from "./handlers";
+import { saveState } from "./state";
 import { getPeerCred } from "./peercred";
 import { loadState } from "./state";
 import { DAEMON_ROOT_SOCKET, DAEMON_SOCKET, Request } from "./protocol";
@@ -32,8 +33,17 @@ export async function runDaemon(): Promise<void> {
     const userServer = bind(DAEMON_SOCKET, 0o660, madGid, (sock) => handleConn(sock, false, state, ca));
     const rootServer = bind(DAEMON_ROOT_SOCKET, 0o600, 0, (sock) => handleConn(sock, true, state, ca));
 
-    process.on("SIGINT", () => shutdown(userServer, rootServer));
-    process.on("SIGTERM", () => shutdown(userServer, rootServer));
+    // Periodic prune: any OTP that expires without being consumed gets its
+    // password locked via passwd -l. Without this timer, an OTP would stay
+    // a valid login until the next handler call happens to call pruneOtps.
+    const prune = setInterval(() => {
+        const before = state.otps.length;
+        pruneOtps(state);
+        if (state.otps.length !== before) saveState(state);
+    }, 60 * 1000);
+
+    process.on("SIGINT", () => { clearInterval(prune); shutdown(userServer, rootServer); });
+    process.on("SIGTERM", () => { clearInterval(prune); shutdown(userServer, rootServer); });
 
     console.log(`mad daemon listening on ${DAEMON_SOCKET} and ${DAEMON_ROOT_SOCKET}`);
 }

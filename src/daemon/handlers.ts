@@ -96,7 +96,7 @@ function dispatch(req: Request, ctx: HandlerCtx): any {
         case "release-tap":        return releaseTap(req, ctx);
         case "list-taps":          return listTaps(ctx);
         case "create-otp":         return createOtp(req, ctx);
-        case "consume-otp":        return consumeOtp(req, ctx);
+        case "enroll-self":        return enrollSelf(req, ctx);
         case "ca-sign":            return caSign(req, ctx);
         case "ca-pubkey":          return { pubkey: ctx.ca.publicKey() };
         case "ca-krl":             return { krl: ctx.ca.generateKrl(ctx.state.revoked.map(r => r.serial)).toString("base64") };
@@ -188,7 +188,23 @@ function createOtp(req: { username: string }, ctx: HandlerCtx) {
     requireRoot(ctx);
     assertValidName(req.username, "user");
     pruneOtps(ctx.state);
+
+    // Ensure the user exists and is in the right groups so they hit
+    // `Match Group mad-users` (password auth + ForceCommand) on next ssh.
+    if (!userExists(req.username)) {
+        execFileSync("useradd", ["-m", "-G", "mad,mad-users", req.username], { stdio: "inherit" });
+    } else {
+        execFileSync("usermod", ["-aG", "mad,mad-users", req.username], { stdio: "ignore" });
+    }
+
+    // Generate OTP and set it as the user's Linux password. sshd will
+    // accept it via standard PAM password auth; no /etc/pam.d/sshd tweak.
     const otp = randomBytes(4).readUInt32BE(0).toString().padStart(8, "0").slice(-8);
+    const r = spawnSync("chpasswd", { input: `${req.username}:${otp}`, encoding: "utf-8" });
+    if (r.status !== 0) throw new Error(`chpasswd failed: ${(r.stderr ?? "").trim() || `exit ${r.status}`}`);
+
+    // Drop older pending OTPs for this user.
+    ctx.state.otps = ctx.state.otps.filter(o => o.username !== req.username);
     const record: OtpRecord = {
         otp,
         username: req.username,
@@ -197,6 +213,25 @@ function createOtp(req: { username: string }, ctx: HandlerCtx) {
     ctx.state.otps.push(record);
     saveState(ctx.state);
     return { otp, expiresAt: record.expiresAt };
+}
+
+/**
+ * Called from `mad enroll` after the user has already authenticated to
+ * sshd (via their OTP-as-password). The daemon trusts SO_PEERCRED for
+ * identity, signs the supplied pubkey, drops it into their
+ * authorized_keys, and locks the OTP password so it can't be reused.
+ */
+function enrollSelf(req: { pubkey: string }, ctx: HandlerCtx) {
+    const username = usernameFromUid(ctx.peer.uid);
+    if (!username) throw new Error("unknown caller");
+
+    const { cert, record } = mintCert(req.pubkey, username, ctx);
+    appendAuthorizedKey(username, req.pubkey);
+    try { execFileSync("passwd", ["-l", username], { stdio: "ignore" }); } catch {}
+
+    ctx.state.otps = ctx.state.otps.filter(o => o.username !== username);
+    saveState(ctx.state);
+    return { username, cert, serial: record.serial };
 }
 
 /**
@@ -252,22 +287,6 @@ function mintCert(pubkey: string, username: string, ctx: HandlerCtx): { cert: st
     return { cert, record };
 }
 
-function consumeOtp(req: { otp: string; pubkey: string }, ctx: HandlerCtx) {
-    pruneOtps(ctx.state);
-    const idx = ctx.state.otps.findIndex(o => o.otp === req.otp);
-    if (idx < 0) throw new Error("invalid or expired OTP");
-    const rec = ctx.state.otps[idx];
-
-    if (!userExists(rec.username)) {
-        execFileSync("useradd", ["-m", "-G", "mad,mad-users", rec.username], { stdio: "inherit" });
-    }
-    const { cert, record } = mintCert(req.pubkey, rec.username, ctx);
-    appendAuthorizedKey(rec.username, req.pubkey);
-
-    ctx.state.otps.splice(idx, 1);
-    saveState(ctx.state);
-    return { username: rec.username, cert, serial: record.serial };
-}
 
 function caSign(req: { pubkey: string; username: string }, ctx: HandlerCtx) {
     requireRoot(ctx);
@@ -340,7 +359,17 @@ function madGroupsOf(username: string): string[] {
     return getUserGroups(username).filter(g => !housekeeping.has(g));
 }
 
-function pruneOtps(state: DaemonState) {
+export function pruneOtps(state: DaemonState) {
     const now = Date.now();
-    state.otps = state.otps.filter(o => o.expiresAt > now);
+    const expired = state.otps.filter(o => o.expiresAt <= now);
+    for (const o of expired) {
+        // Expired without being consumed → lock the password so the OTP
+        // can't be used as a login. If the user was a brand-new account
+        // we created, they're now effectively dormant until an admin
+        // mints them a fresh OTP.
+        try { execFileSync("passwd", ["-l", o.username], { stdio: "ignore" }); } catch {}
+    }
+    if (expired.length > 0) {
+        state.otps = state.otps.filter(o => o.expiresAt > now);
+    }
 }

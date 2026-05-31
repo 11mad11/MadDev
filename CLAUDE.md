@@ -28,7 +28,7 @@ There is no lint, no test runner. Verification is end-to-end (see README and the
 
 Commander root. Subcommands:
 - `daemon` — spawns `runDaemon()` (root-only).
-- `enroll` — runs `runEnroll()`; this is the `ForceCommand` for the `otp` Linux user.
+- `enroll` — runs `runEnroll()`. Invoked by an enrolling user via `ssh user@gw enroll` after `mad otp` has set their Linux password to the OTP. Identifies the caller via `process.getuid()`, asks daemon to sign their pubkey + write authorized_keys + `passwd -l`.
 - `ca {pubkey,sign}` — local CA call if uid 0, daemon call otherwise.
 - `group {create,ls,members,add,rm}` — wraps `groupadd`/`usermod`/`gpasswd`/`getent`.
 - `user {del,forget-keys}` — wraps `userdel` / truncates `~user/.ssh/authorized_keys`.
@@ -69,8 +69,8 @@ Thin wrappers over `id`, `getent`, `groupadd`, `groupdel`, `usermod`, `gpasswd`,
 - `allocate-tap` — create `tap-<group>-<uid>` owned by the calling user, attach to the bridge, assign the next host IP from the subnet. Persistent across CLI exits and daemon restarts.
 - `release-tap` — `ip link delete` the TAP.
 - `list-taps` — filtered to the caller's UID (root sees all).
-- `create-otp` (root) — generate an 8-digit code, persist with 15-minute TTL.
-- `consume-otp` — verify, `useradd -m -G mad-users` the user if missing, sign their pubkey, return the cert. Single-use.
+- `create-otp` (root) — ensures the Linux user exists and is in `mad,mad-users`, generates an 8-digit code, `chpasswd`'s it as the user's Linux password, persists a record with 15-minute TTL. The user authenticates to sshd via that password on their next `ssh user@gw enroll`.
+- `enroll-self` (peer-credentialled) — identifies the caller via `SO_PEERCRED`, signs the supplied pubkey, appends to `authorized_keys`, `passwd -l <user>` to invalidate the OTP. Used by `mad enroll` after sshd already authenticated the user.
 - `ca-sign` (root) — sign an arbitrary pubkey for an arbitrary username (admin tool).
 - `ca-pubkey` — print the CA pub for `TrustedUserCAKeys`.
 
@@ -89,9 +89,7 @@ The `2770` mode + setgid on `/run/mad/groups/<g>/` is what makes group-based iso
 
 ### sshd integration
 
-`systemd/sshd_config.snippet` is the source of truth. Two `Match` blocks:
-- `Match Group mad-users` — `ForceCommand /usr/bin/mad`, plus the StreamLocalBind* knobs.
-- `Match User otp` — `AuthenticationMethods none`, `ForceCommand /usr/bin/mad enroll`.
+`systemd/sshd_config.snippet` is the source of truth. One `Match Group mad-users` block sets `ForceCommand /usr/bin/mad`, `PasswordAuthentication yes` (needed by the enrollment flow), and the `StreamLocalBind*` knobs. There is no shared `otp` Linux user any more — each enrolling user is their own account; the daemon sets their password to the OTP via `chpasswd` for the 15-minute enrollment window and `passwd -l`'s it on successful enroll.
 
 ## Conventions worth knowing
 

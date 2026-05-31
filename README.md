@@ -43,13 +43,15 @@ There is no built-in auto-update — wrap `mad update` in a systemd timer or cro
 
 ```sh
 # sysadmin:
-sudo mad otp create alice
-# → prints a one-time code, valid 15 minutes
+sudo mad otp alice
+# → ensures alice's Linux user exists in groups mad,mad-users
+# → sets a one-time 8-digit password (15-min TTL)
 
 # alice on her client:
-ssh otp@<server>
-# follow the prompts: paste the OTP, paste ~/.ssh/id_rsa.pub
-# save the printed cert as ~/.ssh/id_rsa-cert.pub
+ssh alice@<server> enroll
+# → sshd accepts the OTP as her Linux password
+# → mad prompts her for her pubkey, signs it, writes authorized_keys,
+#   then `passwd -l alice` so the OTP can't be reused
 ssh alice@<server>   # lands in the mad menu
 ```
 
@@ -133,5 +135,5 @@ Host dev01
 - `mad user {del,forget-keys,lockout}` — user management (root); `lockout` revokes certs + clears `authorized_keys`.
 - `mad service {ls,register,use}` — discoverability + prints the right `ssh -R` / `ssh -L`.
 - `mad tap {join,leave,ls}` — L2 VPN.
-- `mad otp <username>` — mint an enrollment code (root).
-- `mad enroll` — the OTP redemption flow (sshd ForceCommand for the `otp` user).
+- `mad otp <username>` — ensure the Linux user, mint a 15-min OTP, set it as their Linux password (root).
+- `mad enroll` — first-time pubkey upload; signs your key, writes authorized_keys, locks the OTP password. Run as the user being enrolled.

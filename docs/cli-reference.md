@@ -50,8 +50,8 @@ The `Where` column tells you which socket the daemon-side command goes through:
 
 | Command | Where | Notes |
 |---|---|---|
-| `mad otp <username>` | root | Mints a one-time enrollment code. Valid 15 minutes. |
-| `mad enroll` | user (lazy) | The `Match User otp` ForceCommand. Reads OTP and pubkey, returns signed cert. |
+| `mad otp <username>` | root | Ensures the Linux user (creates if missing, adds to `mad,mad-users`), mints a 15-min OTP, sets it as the user's Linux password via `chpasswd`. Hand the OTP to the user. |
+| `mad enroll` | user | Run AS the enrolling user after `ssh user@gw enroll`. Prompts for pubkey, signs it, writes `authorized_keys`, locks the OTP password (`passwd -l`). |
 
 ## Services (forwarding)
 
