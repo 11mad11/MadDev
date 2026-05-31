@@ -247,41 +247,37 @@ async function main() {
             process.stdout.write(`ssh -L ${localport}:/run/mad/groups/${g}/${n}.sock mad service ping ${g}/${n}\n`);
         });
     service.command("hold")
-        .description("Hold an ssh -R session and unlink the registered socket on disconnect")
+        .description("Hold an ssh -R session; on boot, sweep any orphan sockets in the same group dir")
         .argument("<groupname>", "group/name (the path = /run/mad/groups/<group>/<name>.sock)")
         .action(async (groupname) => {
             const [g, n] = groupname.split("/");
             if (!g || !n) throw new Error("expected <group>/<name>");
-            const path = `/run/mad/groups/${g}/${n}.sock`;
-            // sshd doesn't always send a graceful signal — on the path
-            // tested in production it goes straight to SIGKILL. So we
-            // spawn a detached watcher (its own session via detached:true)
-            // that the SIGKILL doesn't reach. The watcher polls our PID;
-            // when we go away, it unlinks the socket and exits.
-            const { spawn } = await import("child_process");
-            const watcherCode = `
-                const fs = require("fs");
-                const watchPid = parseInt(process.argv[process.argv.length - 2], 10);
-                const path = process.argv[process.argv.length - 1];
-                const log = (m) => { try { fs.appendFileSync("/tmp/mad-watcher.log", new Date().toISOString() + " " + m + "\\n"); } catch {} };
-                log("watcher started pid=" + process.pid + " watching=" + watchPid + " path=" + path);
-                setInterval(() => {
-                    try { process.kill(watchPid, 0); }
-                    catch (e) {
-                        log("parent " + watchPid + " gone (" + e.code + "), unlinking " + path);
-                        try { if (fs.existsSync(path)) fs.unlinkSync(path); log("unlinked"); }
-                        catch (e) { log("unlink failed: " + e.message); }
-                        process.exit(0);
+            const dir = `/run/mad/groups/${g}`;
+            const path = `${dir}/${n}.sock`;
+            const { existsSync, readdirSync, unlinkSync } = await import("fs");
+            const { spawnSync } = await import("child_process");
+            // sshd reaps the entire session cgroup on disconnect — even
+            // detached/setsid children get killed — so we can't reliably
+            // clean up THIS socket at our own death. Instead, cleanup
+            // happens at the *next* hold: sweep dead siblings in the same
+            // group dir on startup. Combined with sshd's own pre-bind
+            // unlink, the steady-state behaviour is "orphan sockets exist
+            // briefly between disconnect and next registration".
+            try {
+                const ssOut = (spawnSync("ss", ["-xlH"], { encoding: "utf-8" }).stdout ?? "");
+                let swept = 0;
+                if (existsSync(dir)) {
+                    for (const entry of readdirSync(dir)) {
+                        if (!entry.endsWith(".sock")) continue;
+                        const p = `${dir}/${entry}`;
+                        if (p === path) continue;
+                        if (!ssOut.includes(p)) {
+                            try { unlinkSync(p); swept++; } catch {}
+                        }
                     }
-                }, 500);
-            `;
-            const watcher = spawn(process.execPath, ["-e", watcherCode, "--", String(process.pid), path], {
-                detached: true,
-                stdio: "ignore",
-            });
-            watcher.unref();
-            process.stderr.write(`mad service hold: spawned watcher pid=${watcher.pid} for ${path}\n`);
-            // Main process: just sit there until sshd shoots us.
+                }
+                if (swept > 0) process.stderr.write(`mad service hold: swept ${swept} orphan socket(s) in ${dir}\n`);
+            } catch {}
             setInterval(() => {}, 60_000);
         });
 
