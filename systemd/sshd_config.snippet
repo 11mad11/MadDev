@@ -14,7 +14,9 @@ Match Group mad-users
     StreamLocalBindMask 0117
     StreamLocalBindUnlink yes
     PasswordAuthentication yes
-    # PermitTunnel point-to-point enables `ssh -w 0:0` for L3 tunneling into
-    # group networks. The client end requires CAP_NET_ADMIN; gateway side is
-    # configured by `mad tun-attach` via the daemon.
-    PermitTunnel point-to-point
+    # PermitTunnel yes enables both `ssh -w 0:0 -o Tunnel=ethernet` (L2,
+    # bridged into the group's mad-<group> bridge so broadcast traffic works —
+    # used for LAN-discovery P2P games) and `Tunnel=point-to-point` (L3, IP
+    # routing). Client end requires CAP_NET_ADMIN; gateway side is configured
+    # by `mad tun-attach` via the daemon.
+    PermitTunnel yes

@@ -476,13 +476,14 @@ async function main() {
             }, 1000);
         });
 
-    const tun = program.command("tun").description("L3 tunnel from this machine into a group's network via ssh -w");
+    const tun = program.command("tun").description("L2/L3 tunnel from this machine into a group's network via ssh -w");
     tun.command("join")
-        .description("Open a tun tunnel from this machine into <gateway>/<group> (Linux/macOS, root required)")
+        .description("Open a tun/tap tunnel into <gateway>/<group> — L2 by default (Linux/macOS, root required)")
         .argument("<gw/group>", "gateway alias + group name, e.g. mad/marc")
-        .action(async (spec) => {
+        .option("--l3", "Force L3 mode (point-to-point TUN, no broadcast). Default is L2 (TAP, bridged, carries broadcast/ARP — needed for LAN-discovery P2P games).")
+        .action(async (spec, opts) => {
             const { tunJoin } = await import("./commands/tunClient");
-            await tunJoin(spec);
+            await tunJoin(spec, opts.l3 ? "l3" : "l2");
         });
     tun.command("leave")
         .description("Close a tun tunnel previously opened by `tun join`")

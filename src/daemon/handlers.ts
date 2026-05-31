@@ -137,51 +137,81 @@ function deleteGroupNetns(req: { group: string }, ctx: HandlerCtx) {
 }
 
 /**
+ * Read /sys/class/net/<ifname>/tun_flags to figure out whether sshd
+ * created a TAP (L2 — bit IFF_TAP=0x0002) or a TUN (L3 — IFF_TUN=0x0001).
+ * Returns "tap" / "tun" / null. Drives the bridge-vs-route decision below.
+ */
+function detectTunFlavor(ifname: string): "tap" | "tun" | null {
+    try {
+        const raw = readFileSync(`/sys/class/net/${ifname}/tun_flags`, "utf-8").trim();
+        const flags = parseInt(raw, 16);
+        if (!Number.isFinite(flags)) return null;
+        if ((flags & 0x0002) !== 0) return "tap";
+        if ((flags & 0x0001) !== 0) return "tun";
+        return null;
+    } catch { return null; }
+}
+
+/**
  * Called by the gateway-side `mad tun-attach` after sshd has set up the
- * tun device via `ssh -w`. Daemon picks the next host IP in the group's
- * subnet, attaches the kernel tun device into the group's bridge, brings
- * it up, and records the result for future bookkeeping.
+ * tun/tap device via `ssh -w`. Behavior depends on what sshd created:
  *
- * The bridge is the same one TAPs use (`mad-<group>`) — TUN-over-SSH and
- * legacy TAPs share the bridge until TAP is removed in step 7.
+ *  - TAP (L2, `ssh -w … -o Tunnel=ethernet`): bridge the gateway end into
+ *    `mad-<group>`. Broadcast / multicast / non-IP traffic flows natively.
+ *    The bridge already has the gateway IP; the TAP needs nothing.
+ *  - TUN (L3, `Tunnel=point-to-point`): give the gateway end an IP in the
+ *    group subnet, kernel routes between this point-to-point and the
+ *    bridge. No broadcast.
+ *
+ * The CLIENT end always gets an IP allocated and returned. In L2 it's
+ * "your address on the group LAN"; in L3 it's the remote end of the
+ * point-to-point.
  */
 function tunAllocateIp(req: { group: string; ifname: string }, ctx: HandlerCtx): TunRecord {
     requireGroup(ctx, req.group);
     const netns = ctx.state.netns.find(n => n.group === req.group);
     if (!netns) throw new Error(`group has no network: ${req.group}`);
-    if (!/^tun\d+$/.test(req.ifname)) throw new Error(`invalid ifname: ${req.ifname}`);
+    if (!/^(tun|tap)\d+$/.test(req.ifname)) throw new Error(`invalid ifname: ${req.ifname}`);
     if (!ipExists(["link", "show", "dev", req.ifname]))
         throw new Error(`no kernel device ${req.ifname} — open the ssh -w session first`);
+
+    const flavor = detectTunFlavor(req.ifname);
+    if (!flavor) throw new Error(`could not detect TAP/TUN flavor for ${req.ifname}`);
 
     const uid = ctx.peer.uid;
     const username = usernameFromUid(uid);
     if (!username) throw new Error("unknown caller");
 
-    // Drop any stale record for this ifname before allocating fresh.
     ctx.state.tuns = ctx.state.tuns.filter(t => t.ifname !== req.ifname);
 
-    const host = netns.nextHost++;
     const prefix = netns.subnet.split("/")[1];
-    const ip4 = `${subnetHost(netns.subnet, host)}/${prefix}`;
-    const peerHost = host + 1;
-    netns.nextHost = peerHost + 1;
-    const peer4 = `${subnetHost(netns.subnet, peerHost)}/${prefix}`;
+    let gatewayIp = "";
+    let clientIp = "";
 
-    // Note: `ip link set master <bridge>` requires the device to be a tap
-    // (l2) or a netdev that can bridge. `ssh -w` creates a tun (l3 only)
-    // which cannot be bridged. So instead of bridging, route between the
-    // gateway end and the bridge by giving the gateway end an IP in the
-    // group subnet — packets that should reach other group members get
-    // forwarded by the kernel.
-    ip(["addr", "add", ip4, "dev", req.ifname]);
-    ip(["link", "set", "dev", req.ifname, "up"]);
+    if (flavor === "tap") {
+        ip(["link", "set", "dev", req.ifname, "master", bridgeName(req.group)]);
+        ip(["link", "set", "dev", req.ifname, "up"]);
+        // Gateway end gets no IP — bridge already has one. Client gets the
+        // next host address.
+        const host = netns.nextHost++;
+        clientIp = `${subnetHost(netns.subnet, host)}/${prefix}`;
+    } else {
+        // TUN: point-to-point. Need two IPs in the same subnet.
+        const host = netns.nextHost++;
+        const peerHost = host + 1;
+        netns.nextHost = peerHost + 1;
+        gatewayIp = `${subnetHost(netns.subnet, host)}/${prefix}`;
+        clientIp = `${subnetHost(netns.subnet, peerHost)}/${prefix}`;
+        ip(["addr", "add", gatewayIp, "dev", req.ifname]);
+        ip(["link", "set", "dev", req.ifname, "up"]);
+    }
 
     const record: TunRecord = {
         group: req.group,
         uid, username,
         ifname: req.ifname,
-        ip: ip4,
-        peerIp: peer4,
+        ip: gatewayIp || `(bridged)`,
+        peerIp: clientIp,
         sshPid: ctx.peer.pid,
         createdAt: Date.now(),
     };

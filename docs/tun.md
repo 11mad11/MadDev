@@ -1,50 +1,60 @@
-# TUN-over-SSH: L3 connectivity from your laptop into a group's network
+# TUN/TAP-over-SSH: L2/L3 connectivity into a group's network
 
 Who: any user in a group with a configured subnet on a mad gateway.
-What: an `ssh -w` tunnel that gives your local machine a `tunN` interface with an IP in the group's subnet. Other group members in the same subnet become reachable directly from your laptop.
+What: an `ssh -w` tunnel that gives your local machine a `tapN` (L2, default) or `tunN` (L3) interface with an IP in the group's subnet. Other group members become reachable directly from your laptop — and in L2 mode, broadcast/ARP also crosses, so LAN-discovery P2P games (Hamachi-style) work.
+
+## L2 (default) vs L3
+
+| Mode | ssh option | Kernel device | What flows | Use it for |
+|---|---|---|---|---|
+| L2 (default) | `Tunnel=ethernet` | `tapN` | Ethernet frames — IP + ARP + broadcast + non-IP | Hamachi-style P2P LANs, LAN-discovery games, multicast services |
+| L3 (`--l3`) | `Tunnel=point-to-point` | `tunN` | IP packets only, point-to-point | Lower overhead when you only need IP unicast, or on macOS (which lacks a kernel TAP driver) |
+
+In L2 mode, the gateway bridges your tap device into `mad-<group>`. Broadcast frames from your laptop reach every other group member attached to that bridge — that's what makes LAN-discovery work.
 
 ## How it works
 
-OpenSSH has built-in tunnel forwarding via `-w <local>:<remote>`. The gateway's sshd creates a tun device on each end of the SSH session and forwards packets between them. The mad daemon allocates the gateway end's IP and brings it up; mad's client side configures the local end. When the SSH session dies, both tun devices vanish — no orphans, no cleanup needed.
+OpenSSH has built-in tunnel forwarding via `-w <local>:<remote>`. With `Tunnel=ethernet`, sshd creates a TAP device on each end; with `Tunnel=point-to-point`, it creates a TUN. The mad daemon either bridges the gateway-side TAP into `mad-<group>` (L2) or assigns an IP and routes (L3). When the SSH session dies, both kernel devices vanish — no orphans, no cleanup needed.
 
 ```
 ~~~~~~~~~~~~~~~~ your laptop ~~~~~~~~~~~~~~~~      ~~~~~~~~~~~~~~~~ gateway ~~~~~~~~~~~~~~~~
-                                                  
-   local tunN (10.42.0.43/24)    ssh -w 0:0       remote tun0 (10.42.0.42/24)
-   ip addr add 10.42.0.43/24     ─────────────►   mad tun-attach <group> tun0
-   ip link set up                                  → daemon allocates IP, ip link up
-                                                  → packets reach the mad-<group>
-                                                    bridge → other group members
+
+   local tapN (10.42.0.43/24)    ssh -w 0:0       remote tap0
+   ip addr add 10.42.0.43/24     Tunnel=ethernet  mad tun-attach <group> tap0
+   ip link set up                ─────────────►   → daemon bridges tap0 into mad-<group>
+                                                  → broadcast/ARP reaches every other
+                                                    group member's tap → LAN discovery
 ```
 
-Same UDP port as everything else (port 22 = SSH). No new firewall holes.
+Same single port as everything else (port 22 = SSH). No new firewall holes.
 
 ## Prerequisites
 
 **On the gateway (one-time, done by `mad setup`):**
-- sshd_config snippet now includes `PermitTunnel point-to-point` under `Match Group mad-users`.
+- sshd_config snippet includes `PermitTunnel yes` under `Match Group mad-users`.
 - Group must have a subnet (`mad group create <name> --subnet 10.42.0.0/24`).
 
 **On the client (per join):**
-- Root, for `ip link` on Linux (macOS uses `utun` and may have different requirements).
-- Linux or macOS — Windows OpenSSH does not implement `-w`.
+- Root, for `ip link`.
+- Linux (default L2) or macOS (auto-falls back to L3 — see platform matrix).
 
 ## Joining
 
 ```sh
-sudo mad tun join <gateway>/<group>
+sudo mad tun join <gateway>/<group>           # L2 (default on Linux)
+sudo mad tun join <gateway>/<group> --l3      # force L3
 ```
 
 For example, with a `Host mad` block in your ssh_config and a `demo` group on the gateway:
 
 ```sh
 sudo mad tun join mad/demo
-# → opening tun tun0 via ssh mad…
-# → ✔ mad/demo tun0 10.42.0.43/24
+# → opening tap tap0 (L2 bridged) via ssh mad…
+# → ✔ mad/demo tap0 10.42.0.43/24 (L2)
 # → ssh pid 12345 — leave with: mad tun leave mad/demo
 ```
 
-The SSH session runs detached; your shell prompt comes back. The tun device persists until you `mad tun leave` (or the SSH session dies for any other reason).
+The SSH session runs detached; your shell prompt comes back. The tap/tun device persists until you `mad tun leave` (or the SSH session dies for any other reason).
 
 ## Listing active sessions
 
@@ -52,7 +62,7 @@ The SSH session runs detached; your shell prompt comes back. The tun device pers
 mad tun ls
 ```
 
-Reads `~/.config/mad/tun-state.json` and shows which gateway/group each `tunN` belongs to, plus liveness of the underlying SSH process.
+Reads `~/.config/mad/tun-state.json` and shows which gateway/group each `tapN`/`tunN` belongs to, plus liveness of the underlying SSH process.
 
 ## Leaving
 
@@ -60,27 +70,37 @@ Reads `~/.config/mad/tun-state.json` and shows which gateway/group each `tunN` b
 sudo mad tun leave <gateway>/<group>
 ```
 
-SIGTERM to the SSH process; both tun devices vanish; the state record is cleaned up.
+SIGTERM to the SSH process; both kernel devices vanish; the state record is cleaned up.
 
 ## Reaching other group members
 
-The gateway's `mad-<group>` bridge already carries traffic for everyone in the group's subnet. Your tun device gets routed through that bridge by the gateway-side IP allocation, so:
+The gateway's `mad-<group>` bridge carries traffic for everyone in the group's subnet.
 
-- Reach the gateway end on the IP listed by `mad tun ls` (column `ip`).
-- Other members get IPs in the same subnet; their addresses come from `mad tun ls` on their own machines or from the gateway's `state.json`.
+- **L2:** your tap device is bridged onto `mad-<group>` directly. Other members' tap devices are bridged onto the same bridge. Reach them by IP, by broadcast, by mDNS — anything that works on a normal LAN.
+- **L3:** you get a point-to-point link to the gateway end; the gateway routes between you and the bridge. Unicast IP works; broadcast does not cross.
 
 ## Platform matrix
 
-| Platform | `mad tun join` | Notes |
-|---|---|---|
-| Linux | ✓ | `ip link`, requires root |
-| macOS | ✓ | `utun`, requires root |
-| Windows | ✗ | OpenSSH for Windows doesn't implement `-w`. Use port forwarding instead — see `mad service register/use`. |
+| Platform | L2 default | L3 (`--l3`) | Notes |
+|---|---|---|---|
+| Linux | ✓ TAP | ✓ TUN | Both work natively |
+| macOS | (auto-fallback to L3) | ✓ utun | macOS has no native kernel TAP driver; mad warns and falls back to L3 |
+| Windows | ✗ | ✗ | OpenSSH for Windows doesn't implement `-w`. Use TCP forwarding instead — see below |
 
-## Difference from the old `mad tap` (now removed)
+### Windows workaround for P2P games
 
-The previous `mad tap join` allocated a TAP device on the gateway and attached it to a Linux bridge — useful only when you were shelled into the gateway itself. Your laptop never saw the network.
+Windows can still host or join P2P games that support **direct IP connect**:
 
-TUN-over-SSH gives your actual client machine a working L3 interface into the group's subnet. No L2 (broadcast/multicast doesn't traverse). For most "I want to reach this group's hosts from my laptop" cases that's the right tradeoff.
+```sh
+# on the host (linux/mac):
+mad service register <group>/<game> localhost:<gamePort>
 
-If you specifically need L2 (broadcast/multicast/non-IP protocols), you'd have to layer something like a bridged VPN on top. That's not bundled.
+# on the windows guest, eval the printed `ssh -L` to forward the port:
+mad service use <gw>/<group>/<game> <localPort>
+```
+
+Games that depend on LAN broadcast discovery (no direct-IP option) need L2 — which currently means Linux or macOS. Native Windows L2 support would need TAP-Windows6 + a custom stdio bridge between OpenSSH and the driver; not bundled.
+
+## Why default L2?
+
+The original use case is Hamachi-style P2P LANs for gaming. Most LAN-discovery games rely on broadcast frames or non-IP protocols that don't cross an L3 link. Defaulting to L2 keeps the "just works on a virtual LAN" feel; pass `--l3` when you specifically don't need broadcast and want the lighter overhead.
