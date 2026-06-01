@@ -82,6 +82,13 @@ docker compose up -d
 | 13a | Phase 2 BPF collector running | `bpftrace usage_unix.bt` is visible in the gateway container after daemon startup |
 | 13b | svc-publish bytes recorded | Fresh `ssh -R` + `ssh -L` chain pushes 1 MiB through `ga/web2.sock`; within 90 s the daemon's BPF collector inserts an `svc-publish` row attributed to alice with ≥512 KiB total |
 | 13 | Self-serve view is uid-scoped | alice's `ssh alice@gateway usage` returns a strict subset of root's `mad usage report` — daemon clamps the filter to `ctx.peer.uid` |
+| 14 | CA pubkey published | `mad ca pubkey` returns an `ssh-ed25519` key with a parseable fingerprint |
+| 15 | User self-refresh signs valid cert | alice's `cert refresh` returns an `ssh-ed25519-cert-v01@openssh.com` blob; `ssh-keygen -L` parses Key ID `user_alice` and principals include both `alice` and her group `ga` |
+| 16 | Issued cert appears in admin's listing | `mad cert ls --user alice` shows the just-issued serial with status=`active` |
+| 17 | `cert ls` is uid-scoped | alice's `ssh alice@gateway cert ls` returns only her own certs |
+| 18 | Revoke + KRL update | Admin's `mad cert revoke --serial <N>` flips status to `revoked` and grows `/etc/ssh/mad_krl` |
+| 19 | Unrevoke | Admin's `mad cert unrevoke <N>` flips status back to `active` |
+| 20 | Admin signs an arbitrary key | `mad ca sign conformitytest` over an admin pipe produces a cert with Key ID `user_conformitytest` |
 
 Plus four informational throughput probes after the pass/fail tests:
 

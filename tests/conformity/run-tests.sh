@@ -511,6 +511,120 @@ else
     fi
 fi
 
+# ---- test 14: CA publishes its pubkey ---------------------------------
+echo
+echo "Test 14: CA publishes an ed25519 pubkey"
+ca_pub=$(docker exec madtest-gateway mad ca pubkey 2>/dev/null | tr -d '\r' | head -1)
+if echo "$ca_pub" | grep -qE "^ssh-ed25519 [A-Za-z0-9+/]+=*( |$)"; then
+    fp=$(echo "$ca_pub" | docker exec -i madtest-gateway ssh-keygen -l -f /dev/stdin 2>/dev/null | awk '{print $2}')
+    report pass "ca pubkey is ssh-ed25519 (${fp:-unknown fp})"
+else
+    report fail "ca pubkey" "expected 'ssh-ed25519 …', got: '${ca_pub:0:60}'"
+fi
+
+# ---- test 15: user self-refresh signs a valid cert with right principals
+echo
+echo "Test 15: alice can refresh her own cert via SSH"
+alice_cert=$(docker exec madtest-alice bash -c '
+    cat /init-keys/alice.pub | ssh -o StrictHostKeyChecking=no -o BatchMode=yes \
+        -i /init-keys/alice alice@gateway "cert refresh"
+' 2>/dev/null | tr -d '\r')
+if echo "$alice_cert" | grep -q "^ssh-ed25519-cert-v01@openssh.com "; then
+    docker exec madtest-gateway bash -c "echo '$alice_cert' > /tmp/alice.cert"
+    cert_info=$(docker exec madtest-gateway ssh-keygen -L -f /tmp/alice.cert 2>/dev/null)
+    keyid=$(echo "$cert_info" | awk -F'"' '/Key ID:/ {print $2}')
+    # Principals appear under a "Principals:" header, one per line, indented.
+    principals=$(echo "$cert_info" | awk '/Principals:/,/Critical Options:/' | grep -vE 'Principals:|Critical' | tr -d ' \t')
+    has_user=$(echo "$principals" | grep -c '^alice$' || true)
+    has_group=$(echo "$principals" | grep -c '^ga$' || true)
+    if [ "$keyid" = "user_alice" ] && [ "$has_user" -ge 1 ] && [ "$has_group" -ge 1 ]; then
+        report pass "alice cert: keyid=$keyid principals=$(echo "$principals" | tr '\n' ',' | sed 's/,$//')"
+    else
+        report fail "alice cert fields" "keyid='$keyid' principals='$(echo "$principals" | tr '\n' ' ')'"
+    fi
+else
+    report fail "alice cert refresh" "no cert returned (got '${alice_cert:0:80}…')"
+fi
+
+# Pull alice's serial for the revoke/unrevoke chain.
+ALICE_SERIAL=$(docker exec madtest-gateway mad cert ls --user alice 2>/dev/null | awk '$3 == "active" {print $1; exit}')
+
+# ---- test 16: admin sees alice's cert in `mad cert ls` ----------------
+echo
+echo "Test 16: alice's cert appears in admin's listing"
+if [ -n "$ALICE_SERIAL" ]; then
+    report pass "alice's cert listed (serial=$ALICE_SERIAL)"
+else
+    report fail "cert listing" "no active alice cert in 'mad cert ls --user alice'"
+fi
+
+# ---- test 17: cert ls is uid-scoped for non-root callers --------------
+echo
+echo "Test 17: alice's cert ls is uid-scoped"
+alice_ls=$(docker exec madtest-alice bash -c '
+    ssh -o StrictHostKeyChecking=no -o BatchMode=yes \
+        -i /init-keys/alice alice@gateway "cert ls"
+' 2>/dev/null | tr -d '\r')
+distinct_users=$(echo "$alice_ls" | awk '{print $2}' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
+if [ "$distinct_users" = "alice" ]; then
+    report pass "alice's cert ls shows only her certs (users seen: $distinct_users)"
+else
+    report fail "cert ls scoping" "expected only 'alice', got '$distinct_users'"
+fi
+
+# ---- test 18: admin revokes alice's cert + KRL updates ----------------
+echo
+echo "Test 18: admin revokes alice's cert, KRL file updates"
+if [ -n "$ALICE_SERIAL" ]; then
+    pre_krl=$(docker exec madtest-gateway stat -c "%s" /etc/ssh/mad_krl 2>/dev/null || echo 0)
+    docker exec madtest-gateway mad cert revoke --serial "$ALICE_SERIAL" --reason "conformity-test" >/dev/null 2>&1
+    post_status=$(docker exec madtest-gateway mad cert ls --user alice 2>/dev/null | awk -v s="$ALICE_SERIAL" '$1 == s {print $3}')
+    post_krl=$(docker exec madtest-gateway stat -c "%s" /etc/ssh/mad_krl 2>/dev/null || echo 0)
+    revoked_in_state=$(docker exec madtest-gateway mad cert ls --user alice 2>/dev/null | awk -v s="$ALICE_SERIAL" '$1 == s {print $3}')
+    if [ "$post_status" = "revoked" ] && [ "$post_krl" -gt "$pre_krl" ]; then
+        report pass "serial=$ALICE_SERIAL revoked, KRL grew ${pre_krl}→${post_krl} bytes"
+    else
+        report fail "revoke + KRL" "status='$post_status' krl ${pre_krl}→${post_krl}"
+    fi
+else
+    report fail "revoke" "no serial to revoke"
+fi
+
+# ---- test 19: admin unrevokes -----------------------------------------
+echo
+echo "Test 19: admin unrevokes the cert"
+if [ -n "$ALICE_SERIAL" ]; then
+    docker exec madtest-gateway mad cert unrevoke "$ALICE_SERIAL" >/dev/null 2>&1
+    final_status=$(docker exec madtest-gateway mad cert ls --user alice 2>/dev/null | awk -v s="$ALICE_SERIAL" '$1 == s {print $3}')
+    if [ "$final_status" = "active" ]; then
+        report pass "serial=$ALICE_SERIAL unrevoked, status=active"
+    else
+        report fail "unrevoke" "status='$final_status' after unrevoke"
+    fi
+else
+    report fail "unrevoke" "no serial to unrevoke"
+fi
+
+# ---- test 20: admin signs an arbitrary key for arbitrary username -----
+echo
+echo "Test 20: admin signs a fresh key for an arbitrary username"
+docker exec madtest-gateway bash -c '
+    rm -f /tmp/conformity-test /tmp/conformity-test.pub
+    ssh-keygen -t ed25519 -N "" -f /tmp/conformity-test -C conformity@test >/dev/null 2>&1
+'
+test_cert=$(docker exec madtest-gateway bash -c 'cat /tmp/conformity-test.pub | mad ca sign conformitytest' 2>/dev/null | tr -d '\r')
+if echo "$test_cert" | grep -q "^ssh-ed25519-cert-v01@openssh.com "; then
+    docker exec madtest-gateway bash -c "echo '$test_cert' > /tmp/conformitytest.cert"
+    keyid=$(docker exec madtest-gateway ssh-keygen -L -f /tmp/conformitytest.cert 2>/dev/null | awk -F'"' '/Key ID:/ {print $2}')
+    if [ "$keyid" = "user_conformitytest" ]; then
+        report pass "admin signed cert for 'conformitytest', keyid=$keyid"
+    else
+        report fail "admin sign keyid" "got keyid='$keyid'"
+    fi
+else
+    report fail "admin sign" "no cert returned (got '${test_cert:0:80}…')"
+fi
+
 # ---- summary ---------------------------------------------------------
 echo
 echo "================================="
