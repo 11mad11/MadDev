@@ -163,13 +163,21 @@ SCOPE="${spec.scope}"
 REAL_USER="\${SUDO_USER:-root}"
 REAL_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 
-# 0. socat required for the KRL-aware wrapper
+# 0. socat + sshd required. sshd may not be installed on dev workstations
+# (Pop_OS, fedora workstation, alpine container, …) so bootstrap it here.
 if ! command -v socat >/dev/null 2>&1; then
     new "installing socat"
     if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -q socat
     elif command -v dnf >/dev/null 2>&1; then dnf install -y socat
     elif command -v apk >/dev/null 2>&1; then apk add --no-cache socat
     else echo "install socat manually then re-run" >&2; exit 1; fi
+fi
+if ! command -v sshd >/dev/null 2>&1 && [ ! -x /usr/sbin/sshd ]; then
+    new "installing openssh-server"
+    if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -q openssh-server
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y openssh-server
+    elif command -v apk >/dev/null 2>&1; then apk add --no-cache openssh
+    else echo "install openssh-server manually then re-run" >&2; exit 1; fi
 fi
 
 # 1. mad CA pubkey (embedded — no network round-trip)
@@ -200,7 +208,19 @@ else
     SSHD_CHANGED=1
 fi
 
-# 3. sshd_config snippet (TrustedUserCAKeys + RevokedKeys + Match)
+# 3. sshd_config snippet (TrustedUserCAKeys + RevokedKeys + Match).
+# Some distros (Pop_OS 24.04, minimal Debian) don't have the snippet dir
+# even when sshd is installed; create it and make sure sshd_config pulls
+# from it via an Include directive.
+mkdir -p /etc/ssh/sshd_config.d
+if [ -f /etc/ssh/sshd_config ] && ! grep -qE "^Include[[:space:]]+/etc/ssh/sshd_config\\.d" /etc/ssh/sshd_config; then
+    # Prepend so it wins over anything later in the file.
+    printf '%s\\n' "Include /etc/ssh/sshd_config.d/*.conf" | cat - /etc/ssh/sshd_config > /etc/ssh/sshd_config.new
+    mv /etc/ssh/sshd_config.new /etc/ssh/sshd_config
+    chmod 644 /etc/ssh/sshd_config
+    new "added Include /etc/ssh/sshd_config.d/*.conf to /etc/ssh/sshd_config"
+    SSHD_CHANGED=1
+fi
 SSHD_SNIPPET=/etc/ssh/sshd_config.d/99-mad-share.conf
 read -r -d "" SSHD_CONTENT <<EOF || true
 TrustedUserCAKeys /etc/ssh/mad_ca.pub
