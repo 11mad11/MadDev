@@ -473,7 +473,8 @@ export function syncGroupDirs(): { changed: number; skipped: number } {
             if (!existsSync(dir)) { mkdirSync(dir); touched = true; }
             const s = statSync(dir);
             if (s.uid !== 0 || s.gid !== gid) { chownSync(dir, 0, gid); touched = true; }
-            if ((s.mode & 0o7777) !== 0o2770) { chmodSync(dir, 0o2770); touched = true; }
+            // Bun's chmodSync drops setgid silently; shell out to chmod(1).
+            if ((s.mode & 0o7777) !== 0o2770) { execFileSync("chmod", ["2770", dir]); touched = true; }
             if (touched) changed++;
         } catch {
             skipped++;

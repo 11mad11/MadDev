@@ -1,5 +1,6 @@
 import { createCommand } from "@commander-js/extra-typings";
 import { mkdirSync, chmodSync, chownSync, existsSync } from "fs";
+import { execFileSync } from "child_process";
 import { Cmd, cmdDef } from "../../menu";
 import {
     addUserToGroup,
@@ -38,7 +39,10 @@ export async function createGroupAll(name: string, subnet?: string) {
     const dir = groupDir(name);
     if (!existsSync(dir)) mkdirSync(dir);
     chownSync(dir, 0, gid);
-    chmodSync(dir, 0o2770);
+    // Bun's fs.chmodSync silently drops the setgid bit on directories,
+    // which would let sshd's StreamLocalBind* create sockets with the
+    // wrong group. Shell out to chmod(1) which honors mode 2770.
+    execFileSync("chmod", ["2770", dir]);
 
     if (subnet) await daemon.createGroupNetns(name, subnet);
     return { dir, gid };
