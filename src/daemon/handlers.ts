@@ -69,6 +69,13 @@ function ensureBridge(group: string, subnet: string): GroupNetns {
         const prefix = subnet.split("/")[1];
         ip(["addr", "add", `${gateway}/${prefix}`, "dev", br]);
     }
+    // proxy_arp lets the kernel ARP-reply on the bridge for /32 hosts
+    // routed via the per-client tuns (alice/bob). Without it, L2 clients
+    // (eve/frank on the bridge) can't resolve L3 clients' IPs and the
+    // mixed-mode L2↔L3 ping breaks one-way.
+    try {
+        writeFileSync(`/proc/sys/net/ipv4/conf/${br}/proxy_arp`, "1");
+    } catch {}
     return { group, subnet, nextHost: 2 };
 }
 
