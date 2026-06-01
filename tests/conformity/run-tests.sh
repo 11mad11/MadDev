@@ -249,14 +249,69 @@ fi
 
 # ---- bonus: max throughput (informational, not pass/fail) -------------
 echo
-echo "Bonus: max TCP throughput (alice → bob through gateway forwarding)"
+echo "Bonus A: TUN TCP throughput (alice → bob, gateway IP-forwarding)"
 docker exec -d madtest-bob iperf3 -s -1 -B "$BOB_IP"
 sleep 1
 result=$(docker exec madtest-alice iperf3 -c "$BOB_IP" -t 8 -P 4 -J 2>/dev/null || echo '{}')
 sender_mbps=$(echo "$result" | jq -r '.end.sum_sent.bits_per_second // 0' | awk '{printf "%.1f", $1/1e6}')
 recv_mbps=$(echo "$result" | jq -r '.end.sum_received.bits_per_second // 0' | awk '{printf "%.1f", $1/1e6}')
 retrans=$(echo "$result" | jq -r '.end.sum_sent.retransmits // "?"')
-echo "  alice → bob: ${sender_mbps} Mbps sender, ${recv_mbps} Mbps receiver, retransmits=${retrans}"
+echo "  alice → bob (TUN/L3 TCP): ${sender_mbps} Mbps sender, ${recv_mbps} Mbps receiver, retransmits=${retrans}"
+
+echo
+echo "Bonus B: TAP UDP integrity (eve → frank, 50 Mbps × 5s, same L2 bridge)"
+docker exec -d madtest-frank iperf3 -s -1 -B "$FRANK_IP"
+sleep 1
+tap_udp=$(docker exec madtest-eve iperf3 -c "$FRANK_IP" -u -b 50M -t 5 -J 2>/dev/null || echo '{}')
+tap_lost=$(echo "$tap_udp" | jq -r '.end.sum.lost_packets // "?"')
+tap_total=$(echo "$tap_udp" | jq -r '.end.sum.packets // "?"')
+tap_udp_rate=$(echo "$tap_udp" | jq -r '.end.sum.bits_per_second // 0' | awk '{printf "%.1f", $1/1e6}')
+echo "  eve → frank (TAP/L2 UDP): ${tap_total} pkts, ${tap_lost} lost, ${tap_udp_rate} Mbps"
+
+echo
+echo "Bonus C: TAP TCP throughput (eve → frank, 4 parallel, 8s)"
+docker exec -d madtest-frank iperf3 -s -1 -B "$FRANK_IP"
+sleep 1
+tap_tcp=$(docker exec madtest-eve iperf3 -c "$FRANK_IP" -t 8 -P 4 -J 2>/dev/null || echo '{}')
+tap_tx=$(echo "$tap_tcp" | jq -r '.end.sum_sent.bits_per_second // 0' | awk '{printf "%.1f", $1/1e6}')
+tap_rx=$(echo "$tap_tcp" | jq -r '.end.sum_received.bits_per_second // 0' | awk '{printf "%.1f", $1/1e6}')
+tap_retrans=$(echo "$tap_tcp" | jq -r '.end.sum_sent.retransmits // "?"')
+echo "  eve → frank (TAP/L2 TCP): ${tap_tx} Mbps sender, ${tap_rx} Mbps receiver, retransmits=${tap_retrans}"
+
+echo
+echo "Bonus D: service-forward TCP throughput (bob → alice via ssh -L → ssh -R)"
+# alice exposes a TCP iperf3 server through a -R unix socket; bob's -L
+# turns the unix socket back into a local TCP port for iperf3 -c.
+docker exec madtest-gateway rm -f /run/mad/groups/ga/iperf.sock 2>/dev/null || true
+docker exec -d madtest-alice iperf3 -s -1 -p 8890 -B 127.0.0.1
+sleep 1
+docker exec -d madtest-alice bash -c '
+    exec ssh -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes \
+        -i /init-keys/alice \
+        -R /run/mad/groups/ga/iperf.sock:127.0.0.1:8890 \
+        alice@gateway service hold ga/iperf
+' 2>/dev/null
+for i in $(seq 1 15); do
+    docker exec madtest-gateway test -S /run/mad/groups/ga/iperf.sock && break
+    sleep 1
+done
+docker exec -d madtest-bob bash -c '
+    exec ssh -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes \
+        -i /init-keys/bob \
+        -L 127.0.0.1:9100:/run/mad/groups/ga/iperf.sock \
+        bob@gateway service ping ga/iperf
+' 2>/dev/null
+sleep 3
+fwd=$(docker exec madtest-bob iperf3 -c 127.0.0.1 -p 9100 -t 8 -P 4 -J 2>/dev/null || echo '{}')
+fwd_tx=$(echo "$fwd" | jq -r '.end.sum_sent.bits_per_second // 0' | awk '{printf "%.1f", $1/1e6}')
+fwd_rx=$(echo "$fwd" | jq -r '.end.sum_received.bits_per_second // 0' | awk '{printf "%.1f", $1/1e6}')
+fwd_retrans=$(echo "$fwd" | jq -r '.end.sum_sent.retransmits // "?"')
+echo "  bob → alice (ssh -L → ssh -R TCP): ${fwd_tx} Mbps sender, ${fwd_rx} Mbps receiver, retransmits=${fwd_retrans}"
+
+# Drop the iperf service-forward helpers before the next set of tests so
+# they don't bleed into test 13b's web2 setup.
+docker exec madtest-alice bash -c 'pkill -f "ssh.*service hold ga/iperf" 2>/dev/null; pkill -f "iperf3 -s" 2>/dev/null' >/dev/null 2>&1 || true
+docker exec madtest-bob bash -c 'pkill -f "ssh.*service ping ga/iperf" 2>/dev/null' >/dev/null 2>&1 || true
 
 # ---- cleanup the service-forwarding helpers ---------------------------
 docker exec madtest-alice bash -c 'pkill -f "ssh.*service hold" 2>/dev/null; pkill nc 2>/dev/null' >/dev/null 2>&1 || true

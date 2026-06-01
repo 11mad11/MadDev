@@ -83,9 +83,22 @@ docker compose up -d
 | 13b | svc-publish bytes recorded | Fresh `ssh -R` + `ssh -L` chain pushes 1 MiB through `ga/web2.sock`; within 90 s the daemon's BPF collector inserts an `svc-publish` row attributed to alice with ≥512 KiB total |
 | 13 | Self-serve view is uid-scoped | alice's `ssh alice@gateway usage` returns a strict subset of root's `mad usage report` — daemon clamps the filter to `ctx.peer.uid` |
 
-Plus a bonus throughput probe: iperf3 TCP 4×parallel `alice → bob`
-through gateway IP-forwarding. Last measured: **263 Mbps** on the
-proxmox docker LXC (16 cores / 16 GB).
+Plus four informational throughput probes after the pass/fail tests:
+
+- **Bonus A** — TUN/L3 TCP, `alice → bob` through the gateway's IP
+  forwarding (`iperf3 -t 8 -P 4`).
+- **Bonus B** — TAP/L2 UDP integrity, `eve → frank` over the shared
+  `mad-ga` bridge (`iperf3 -u -b 50M -t 5`).
+- **Bonus C** — TAP/L2 TCP, `eve → frank` over the bridge.
+- **Bonus D** — service-forward TCP, `bob → alice` through
+  `ssh -L → /run/mad/groups/ga/iperf.sock → ssh -R` (iperf3 server on
+  alice, client on bob, the chain runs entirely in sshd + unix
+  sockets).
+
+Last measured on the Proxmox LXC (16 cores / 16 GB): Bonus A ≈ 200–270
+Mbps, Bonus B 0 / 21,378 lost @ 50 Mbps, Bonus C ≈ 700 Mbps+ (L2 bridge
+beats the IP-forwarded /32 path), Bonus D ≈ 80–120 Mbps (capped by the
+extra unix-socket hop + double sshd channel).
 
 Test 11 polls up to 70 s for the 60 s Phase 1 flush. Test 13b polls
 up to 90 s for the bpftrace 60 s interval to fire. Total bench
