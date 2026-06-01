@@ -9,6 +9,7 @@ import { saveState } from "./state";
 import { getPeerCred } from "./peercred";
 import { loadState } from "./state";
 import { DAEMON_ROOT_SOCKET, DAEMON_SOCKET, Request } from "./protocol";
+import { startBpfUsageCollector, stopBpfUsageCollector } from "./bpfUsage";
 
 const CA_KEY_PATH = "/etc/mad/ca/ca.key";
 
@@ -53,8 +54,13 @@ export async function runDaemon(): Promise<void> {
         try { syncGroupDirs(); } catch (e) { console.error("syncGroupDirs tick:", e); }
     }, 60 * 1000);
 
-    process.on("SIGINT", () => { clearInterval(tick); shutdown(userServer, rootServer); });
-    process.on("SIGTERM", () => { clearInterval(tick); shutdown(userServer, rootServer); });
+    // Phase 2 usage metering: spawn the bpftrace collector that watches
+    // AF_UNIX traffic on /run/mad/groups/<g>/<n>.sock. Gracefully no-ops
+    // if bpftrace isn't installed — Phase 1 TAP/TUN metering still works.
+    try { startBpfUsageCollector(); } catch (e) { console.error("bpfUsage start:", e); }
+
+    process.on("SIGINT", () => { clearInterval(tick); stopBpfUsageCollector(); shutdown(userServer, rootServer); });
+    process.on("SIGTERM", () => { clearInterval(tick); stopBpfUsageCollector(); shutdown(userServer, rootServer); });
 
     console.log(`mad daemon listening on ${DAEMON_SOCKET} and ${DAEMON_ROOT_SOCKET}`);
 }

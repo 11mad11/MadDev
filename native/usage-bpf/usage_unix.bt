@@ -1,0 +1,93 @@
+#!/usr/bin/env bpftrace
+/*
+ * AF_UNIX byte counter for mad's usage metering.
+ *
+ * Counts bytes flowing over unix-socket forwards (`ssh -R …/<n>.sock:…`
+ * publishers and `ssh -L …:…/<n>.sock` consumers) which mad cannot see
+ * directly — sshd connects sockets in-kernel without ever entering a
+ * mad process.
+ *
+ * Design: at `unix_stream_connect`, capture the SOCK_DGRAM pointer ->
+ * path mapping from the sockaddr_un the caller supplied. At
+ * sendmsg / recvmsg, look up the connected sock's path and bump the
+ * per-path bytes_tx / bytes_rx counters. Every interval, print the
+ * aggregates and clear them — the daemon (src/daemon/bpfUsage.ts) is
+ * the consumer; it parses our stdout, resolves the path to
+ * (group, service, owner), and inserts svc-publish / svc-consume rows
+ * into /var/lib/mad/usage.db.
+ *
+ * Limitations of this prototype:
+ *  - Only stream sockets are traced. dgram is a separate kprobe set.
+ *  - Accepted server-side sockets aren't covered by `unix_stream_connect`
+ *    — they go through `unix_accept`. For sshd's `-R` listener, the
+ *    accept path is needed to see bytes BACK to the client. A
+ *    libbpf/aya port should add `unix_accept` and walk
+ *    `unix_sk(sk)->addr` to recover the listener path.
+ *  - Bpftrace's stringmap output is whitespace-formatted; the daemon
+ *    parses defensively.
+ *
+ * Runtime requirements: bpftrace ≥ 0.16, kernel ≥ 5.4 with BTF. No C
+ * headers needed — bpftrace resolves struct sockaddr_un / struct sock /
+ * struct socket from the kernel's exposed BTF.
+ */
+
+BEGIN {
+    printf("MAD_USAGE_BPF_READY\n");
+}
+
+kprobe:unix_stream_connect
+{
+    /* unix_stream_connect(struct socket *sock, struct sockaddr *uaddr, …).
+     * sockaddr_un = {sun_family:u16, sun_path[108]} so sun_path starts at
+     * offset 2 from the sockaddr pointer (bpftrace can't take the address
+     * of a struct field directly). We key by the connecting `struct sock *`
+     * — that's what sendmsg/recvmsg get too. The sk pointer is the
+     * sock->sk field of the struct socket passed in arg0 — we resolve it
+     * here once and store a sk→path mapping. */
+    $sock = (struct socket *)arg0;
+    $sk = (uint64)$sock->sk;
+    $path_ptr = (uint8 *)((uint64)arg1 + 2);
+    @path[$sk] = str($path_ptr, 64);
+}
+
+/* Sendmsg / recvmsg keep the per-probe stack tiny: store deltas keyed by
+ * the sk pointer (8 bytes). User-space joins @bytes_* against @path
+ * after each interval print. Storing strings inside the probe would
+ * blow the BPF 512-byte stack limit. */
+kprobe:unix_stream_sendmsg
+{
+    $sock = (struct socket *)arg0;
+    @bytes_tx[(uint64)$sock->sk] = @bytes_tx[(uint64)$sock->sk] + (uint64)arg2;
+}
+
+kprobe:unix_stream_recvmsg
+{
+    $sock = (struct socket *)arg0;
+    @bytes_rx[(uint64)$sock->sk] = @bytes_rx[(uint64)$sock->sk] + (uint64)arg2;
+}
+
+/* We do NOT hook `unix_release` to delete @path entries: short-lived
+ * connections (e.g. mad daemon-socket roundtrips) would have their path
+ * cleared before the next 60s tick fires, leaving the user-space join
+ * with byte counters that can't be resolved to a path. Instead, clear
+ * @path at tick time so the window's connects-and-closes still show up
+ * in that window's snapshot. */
+
+interval:s:60 {
+    printf("MAD_USAGE_TICK %u\n", nsecs);
+    /* @path is keyed by sk pointer — emit it first so the user-space
+     * parser can join sk→path before reading the byte tallies. */
+    print(@path);
+    print(@bytes_tx);
+    print(@bytes_rx);
+    clear(@path);
+    clear(@bytes_tx);
+    clear(@bytes_rx);
+    printf("MAD_USAGE_END\n");
+}
+
+END {
+    clear(@path);
+    clear(@bytes_tx);
+    clear(@bytes_rx);
+}
