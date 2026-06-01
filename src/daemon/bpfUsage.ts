@@ -58,7 +58,15 @@ export function startBpfUsageCollector(): void {
     // -B line: force line-buffered stdout. Default is full block
     // buffering when piped, which holds back our framed output for
     // minutes at low load and breaks the per-tick parser contract.
-    proc = spawn(BPFTRACE_BIN, ["-B", "line", SCRIPT_PATH], { stdio: ["ignore", "pipe", "pipe"] });
+    // BPFTRACE_MAX_MAP_KEYS: default is 4096 per map. On a busy host
+    // @path fills past that within minutes (every unix-socket connect
+    // anywhere on the box gets a slot) and new entries — including the
+    // ones we actually care about under /run/mad/groups/ — silently
+    // fail to write. 131072 is enough for any plausible single-day run.
+    proc = spawn(BPFTRACE_BIN, ["-B", "line", SCRIPT_PATH], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, BPFTRACE_MAX_MAP_KEYS: "131072" },
+    });
 
     const state: ParseState = { buf: "", paths: new Map(), tx: new Map(), rx: new Map() };
     lastWindowStart = Date.now();
