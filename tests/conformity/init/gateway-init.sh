@@ -16,7 +16,7 @@ done
 
 # ---- users ----------------------------------------------------------
 log "creating users + assigning groups"
-declare -A USER_GROUPS=( [alice]=ga [bob]=ga [carol]=gb [dave]=gb )
+declare -A USER_GROUPS=( [alice]=ga [bob]=ga [eve]=ga [frank]=ga [carol]=gb [dave]=gb )
 for user in "${!USER_GROUPS[@]}"; do
     if ! id "$user" >/dev/null 2>&1; then
         useradd -m -s /bin/bash -G mad,mad-users "$user"

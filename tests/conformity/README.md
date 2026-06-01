@@ -66,12 +66,16 @@ docker compose up -d
 
 | # | What it checks | Mechanism |
 |---|---|---|
-| 0 | All clients joined | grep MAD_TUN_OK in each client's log |
-| 1 | Intra-group reachability | `alice ping bob`, `carol ping dave` |
-| 2 | Cross-group isolation | `alice ping carol` (must fail), `dave ping alice` (must fail) |
-| 3 | Packet integrity | iperf3 UDP @ 50 Mbps, expect 0 lost packets |
-| 4 | Payload preservation | 1 MiB random blob over netcat, md5 match |
-| 5 | No plaintext leak | tcpdump on docker bridge during a magic-string ping, magic must not appear |
+| 0 | All six clients joined (4 L3 + 2 L2) | grep MAD_TUN_OK in each client's log |
+| 1 | Intra-group reachability — L3↔L3, L2↔L2, L3↔L2 mixed | ping across all combinations within `ga` and within `gb` |
+| 2 | Cross-group isolation | ping from `ga` clients to `gb` IPs (and vice-versa) must fail |
+| 3 | L2 broadcast scope | eve sends ARP-who-has; frank (same group, L2) sees it on tap0; dave (other group) does not |
+| 4 | Packet integrity | iperf3 UDP @ 50 Mbps for 5 s, expect 0 lost packets |
+| 5 | Payload preservation | 1 MiB random blob over netcat, md5 match |
+| 6 | No plaintext leak | tcpdump on docker bridge during a magic-string ping, magic must not appear |
+| 7 | `ssh -R` socket creation | alice's `ssh -R …web.sock` binds with mode 0660 + group `ga` (StreamLocalBindMask 0117 + 2770-setgid dir) |
+| 8 | `ssh -L` service-forwarding works | bob's `ssh -L … service ping ga/web` chains through to alice's nc listener; canary bytes round-trip |
+| 9 | Cross-group `ssh -L` blocked | carol (gB) cannot read alice's gA socket — denied at the 2770 group-dir level |
 
 Plus a bonus throughput probe: iperf3 TCP 4×parallel `alice → bob`
 through gateway IP-forwarding. Last measured: **263 Mbps** on the

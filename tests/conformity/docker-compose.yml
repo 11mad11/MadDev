@@ -22,6 +22,14 @@ services:
     # default; the sysctl below flips it back on for this netns only.
     sysctls:
       net.ipv4.ip_forward: "1"
+      # default.proxy_arp seeds the per-interface proxy_arp on new
+      # interfaces (mad-ga, mad-gb) created after the container boots.
+      # Needed so the bridge ARP-replies for L3 clients' /32 IPs and
+      # mixed-mode L2↔L3 ping works both ways. Writing the per-iface
+      # /proc/.../proxy_arp from inside the container fails (EROFS
+      # under docker's default seccomp/cgroup restrictions), so we
+      # set it at container creation time via the runtime.
+      net.ipv4.conf.default.proxy_arp: "1"
     devices:
       - "/dev/net/tun:/dev/net/tun"
     volumes:
@@ -116,6 +124,51 @@ services:
       MAD_MODE: l3
     depends_on: [gateway]
 
+  # eve + frank are L2 (TAP) clients in group ga. They share the
+  # mad-ga bridge with alice/bob's gateway tuns and exercise the
+  # L2 path (broadcast/ARP, bridged frame forwarding).
+  eve:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    hostname: eve
+    container_name: madtest-eve
+    cap_add: [NET_ADMIN]
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    volumes:
+      - /root/mad:/mad:ro
+      - ./keys:/init-keys:ro
+    networks:
+      madnet:
+        ipv4_address: 10.99.0.40
+    environment:
+      MAD_USER: eve
+      MAD_GROUP: ga
+      MAD_MODE: l2
+    depends_on: [gateway]
+
+  frank:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    hostname: frank
+    container_name: madtest-frank
+    cap_add: [NET_ADMIN]
+    devices:
+      - "/dev/net/tun:/dev/net/tun"
+    volumes:
+      - /root/mad:/mad:ro
+      - ./keys:/init-keys:ro
+    networks:
+      madnet:
+        ipv4_address: 10.99.0.41
+    environment:
+      MAD_USER: frank
+      MAD_GROUP: ga
+      MAD_MODE: l2
+    depends_on: [gateway]
+
   # Windows-in-docker via dockurr/windows. Disabled by default — it
   # provisions an actual Windows VM via QEMU inside the container,
   # which takes ~30 minutes on first run (ISO download + install).
@@ -159,7 +212,7 @@ services:
       - madwin-data:/storage
     networks:
       madnet:
-        ipv4_address: 10.99.0.40
+        ipv4_address: 10.99.0.50
     stop_grace_period: 2m
 
 volumes:
