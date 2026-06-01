@@ -92,8 +92,14 @@ impl Backend for TapWin6Adapter {
     fn try_recv(&self, out_buf: &mut [u8]) -> Result<Option<usize>, String> {
         let mut read = self.read.lock().unwrap();
         unsafe {
-            // First call: prime an overlapped ReadFile so the event
-            // gets signaled when a frame arrives.
+            // Every fallible step BEFORE we've copied the frame must
+            // clear `read.pending` so the next try_recv re-issues a
+            // fresh ReadFile (otherwise we'd block on a stale event
+            // that the kernel has already moved past). The OS-managed
+            // event tracking lives in `read.overlapped`, which
+            // ReadFile re-initializes on the next issue, so we don't
+            // need to ResetEvent ourselves — just make sure we get
+            // BACK to "no I/O in flight" so the next issue is clean.
             if !read.pending {
                 issue_read(self.device, &mut read)?;
                 if !read.pending {
@@ -107,12 +113,14 @@ impl Backend for TapWin6Adapter {
                 return Ok(None);
             }
             if wait != WAIT_OBJECT_0 {
+                read.pending = false;
                 return Err(format!("tap_win6: WaitForSingleObject returned {wait}"));
             }
 
             let mut transferred: u32 = 0;
             if GetOverlappedResult(self.device, &read.overlapped, &mut transferred, 0) == 0 {
                 let err = GetLastError();
+                read.pending = false;
                 return Err(format!("tap_win6: GetOverlappedResult: GetLastError={err}"));
             }
             let len = transferred as usize;
@@ -182,9 +190,13 @@ impl Backend for TapWin6Adapter {
 /// Sets `read.pending` to true on success (covers both the
 /// "completed synchronously" and "ERROR_IO_PENDING" cases).
 unsafe fn issue_read(device: HANDLE, read: &mut ReadState) -> Result<(), String> {
-    // Re-zero the overlapped and re-set the event handle. The event
-    // is auto-reset on a successful Wait so we don't strictly need
-    // to clear it, but doing so guards against races on partial-completion.
+    // Re-zero the OVERLAPPED and re-set the event handle. The event
+    // is MANUAL-reset (CreateEventW bManualReset=1), so callers might
+    // see it still signaled from a prior completion. ReadFile itself
+    // resets the event when it issues the I/O, so we don't have to
+    // ResetEvent ourselves — but only if we get to ReadFile. On
+    // err-before-issue we leave `pending` false so the next try_recv
+    // re-issues from scratch.
     let event = read.event;
     read.overlapped = zeroed();
     read.overlapped.hEvent = event;
