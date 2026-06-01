@@ -31,7 +31,7 @@ export default cmdDef({
             const fname = `install-${groupname.replace("/", "-")}.sh`;
             ctx.output.write(`\nRun this from your local shell to save the install script:\n\n`);
             ctx.output.write(`  ssh mad service install ${groupname} ${target} > ${fname}\n\n`);
-            ctx.output.write(`Review it, then run: sh ${fname}\n`);
+            ctx.output.write(`Review it, then run: bash ${fname}\n`);
             return;
         }
         const { forwardingScript } = await import("../install");

@@ -28,7 +28,7 @@ export default cmdDef({
             const fname = `install-ssh-${groupDevice.replace("/", "-")}.sh`;
             ctx.output.write(`\nRun this from your local shell to save the install script:\n\n`);
             ctx.output.write(`  ssh mad service install-ssh ${groupDevice} > ${fname}\n\n`);
-            ctx.output.write(`Review it, then run: sh ${fname}\n`);
+            ctx.output.write(`Review it, then run: bash ${fname}\n`);
             return;
         }
         const { sshShareScript } = await import("../install");

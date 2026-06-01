@@ -89,6 +89,8 @@ docker compose up -d
 | 18 | Revoke + KRL update | Admin's `mad cert revoke --serial <N>` flips status to `revoked` and grows `/etc/ssh/mad_krl` |
 | 19 | Unrevoke | Admin's `mad cert unrevoke <N>` flips status back to `active` |
 | 20 | Admin signs an arbitrary key | `mad ca sign conformitytest` over an admin pipe produces a cert with Key ID `user_conformitytest` |
+| 21 | `service install` script is bash-valid | `mad service install ga/probe 127.0.0.1:8080` output passes `bash -n` and contains the bash shebang, the systemd unit name `mad-fwd-ga-probe.service`, and the socket path `/run/mad/groups/ga/probe.sock` |
+| 22 | `service install-ssh` script is bash-valid + embeds CA pubkey | `mad service install-ssh ga/dev01` passes `bash -n` and contains the share-unit name, the proxy-unit name, and a chunk of the live CA pubkey returned by `mad ca pubkey` |
 
 Plus four informational throughput probes after the pass/fail tests:
 

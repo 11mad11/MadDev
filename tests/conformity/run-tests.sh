@@ -625,6 +625,44 @@ else
     report fail "admin sign" "no cert returned (got '${test_cert:0:80}…')"
 fi
 
+# ---- test 21: `mad service install` generates a syntactically valid script
+echo
+echo "Test 21: mad service install <group/name> <target> — script is bash-valid"
+docker exec madtest-gateway bash -c 'mad service install ga/probe 127.0.0.1:8080 > /tmp/install21.sh'
+if docker exec madtest-gateway bash -n /tmp/install21.sh 2>/dev/null; then
+    has_shebang=$(docker exec madtest-gateway head -1 /tmp/install21.sh | grep -c "bash")
+    has_unit=$(docker exec madtest-gateway grep -c "mad-fwd-ga-probe.service" /tmp/install21.sh || true)
+    has_sock=$(docker exec madtest-gateway grep -c "/run/mad/groups/ga/probe.sock" /tmp/install21.sh || true)
+    if [ "$has_shebang" -ge 1 ] && [ "$has_unit" -ge 1 ] && [ "$has_sock" -ge 1 ]; then
+        report pass "install script: bash shebang + unit + socket path all present"
+    else
+        report fail "install script content" "shebang=$has_shebang unit=$has_unit sock=$has_sock"
+    fi
+else
+    report fail "install script bash syntax" "bash -n found errors"
+fi
+
+# ---- test 22: `mad service install-ssh` generates a valid script with CA pubkey
+echo
+echo "Test 22: mad service install-ssh <group/device> — script is bash-valid + CA pubkey embedded"
+docker exec madtest-gateway bash -c 'mad service install-ssh ga/dev01 > /tmp/install22.sh'
+# Pull the CA pubkey body (2nd field of the ssh-ed25519 line) to assert it appears in the script
+ca_body=$(docker exec madtest-gateway mad ca pubkey 2>/dev/null | tr -d '\r' | head -1 | awk '{print $2}')
+ca_chunk=${ca_body:0:32}
+if docker exec madtest-gateway bash -n /tmp/install22.sh 2>/dev/null; then
+    has_shebang=$(docker exec madtest-gateway head -1 /tmp/install22.sh | grep -c "bash")
+    has_unit=$(docker exec madtest-gateway grep -c "mad-ssh-share-ga.service" /tmp/install22.sh || true)
+    has_ca=$(docker exec madtest-gateway grep -c "$ca_chunk" /tmp/install22.sh || true)
+    has_proxy=$(docker exec madtest-gateway grep -c "mad-tech-proxy.service" /tmp/install22.sh || true)
+    if [ "$has_shebang" -ge 1 ] && [ "$has_unit" -ge 1 ] && [ "$has_ca" -ge 1 ] && [ "$has_proxy" -ge 1 ]; then
+        report pass "install-ssh script: bash shebang + share-unit + proxy-unit + embedded CA pubkey all present"
+    else
+        report fail "install-ssh script content" "shebang=$has_shebang share=$has_unit proxy=$has_proxy ca=$has_ca"
+    fi
+else
+    report fail "install-ssh script bash syntax" "bash -n found errors"
+fi
+
 # ---- summary ---------------------------------------------------------
 echo
 echo "================================="
