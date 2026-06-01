@@ -134,17 +134,28 @@ services:
       DISK_SIZE: "40G"
       USERNAME: "rene"
       PASSWORD: "madtest"
+      # Forward Windows guest SSH back out so we can drive the install
+      # automation from the host. (dockur runs the guest behind NAT;
+      # this opens guest 22 → container 22 → published below.)
+      USER_PORTS: "22"
+    sysctls:
+      # dockur enables NAT/bridge networking only when ip_forward is on
+      # in the container netns. Without this it falls back to slow
+      # user-mode (slirp) networking.
+      net.ipv4.ip_forward: "1"
     devices:
       - "/dev/kvm:/dev/kvm"
       - "/dev/net/tun:/dev/net/tun"
     cap_add: [NET_ADMIN]
     ports:
       - "3389:3389/tcp"   # RDP
-      - "3389:3389/udp"   # RDP
+      - "3389:3389/udp"
       - "8006:8006"       # web viewer
+      - "2222:22/tcp"     # SSH (forwarded into the Windows guest)
     volumes:
       - /root/mad:/mad:ro
       - ./keys:/init-keys:ro
+      - ./oem:/oem:ro      # OEM scripts dockur bakes into the Windows install
       - madwin-data:/storage
     networks:
       madnet:
