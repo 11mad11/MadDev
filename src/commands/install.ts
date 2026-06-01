@@ -271,9 +271,17 @@ for f in id_ed25519 id_ed25519.pub id_ed25519-cert.pub; do
         new "copied $f to /root/.ssh"
     fi
 done
-ssh-keyscan -H "$SERVER_HOST" 2>/dev/null >> /root/.ssh/known_hosts
-sort -u /root/.ssh/known_hosts -o /root/.ssh/known_hosts
+# ssh-keyscan can fail silently under network hiccups; don't let that abort
+# the install. Worst case the first KRL fetch prompts for host-key acceptance
+# in BatchMode and the unit retries.
+touch /root/.ssh/known_hosts
 chmod 600 /root/.ssh/known_hosts
+if ssh-keyscan -H "$SERVER_HOST" 2>/dev/null >> /root/.ssh/known_hosts; then
+    sort -u /root/.ssh/known_hosts -o /root/.ssh/known_hosts
+    ok "captured host keys for $SERVER_HOST"
+else
+    new "ssh-keyscan $SERVER_HOST failed — continuing; you may need to ssh mad once interactively to accept the key"
+fi
 
 # 7. /root/.ssh/config with ControlMaster so the KRL-fetch shares the forwarder's tunnel
 SSH_CONFIG=/root/.ssh/config
