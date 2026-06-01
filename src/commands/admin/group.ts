@@ -119,5 +119,6 @@ export const groupRemoveUser = cmdDef({
 
 export default {
     text: "Groups",
+    cliName: "group",
     children: [groupCreate, groupList, groupMembers, groupAddUser, groupRemoveUser],
 };

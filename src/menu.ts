@@ -30,7 +30,15 @@ export function cmdMenu(cmd: MenuNodeParent): MenuNodeParent {
     return cmd;
 }
 
-export type MenuNodeParent = { text: string, children: MenuNode[] };
+/**
+ * A menu node that groups Cmds. If `cliName` is set, this group also
+ * becomes a Commander subcommand: e.g. `cliName: "service"` makes the
+ * menu's children reachable as `mad service <child>` from the CLI.
+ * If `cliName` is omitted (e.g. the top-level "Menu" or "Admin"
+ * groupings), the parent is a menu-only construct and children get
+ * added to whatever Commander parent we already had.
+ */
+export type MenuNodeParent = { text: string; children: MenuNode[]; cliName?: string };
 export type MenuNode = MenuNodeParent | Cmd<any, any>;
 
 type TNT = (() => (void | Promise<void>) | null);
@@ -73,17 +81,20 @@ export async function runExec(ctx: Ctx, menu: MenuNodeParent, args: string[]): P
     }
 }
 
-async function menuToTree(ctx: Ctx, menu: MenuNodeParent, prog?: Command): Promise<TreeNodeParent<TNT>> {
+export async function menuToTree(ctx: Ctx, menu: MenuNodeParent, prog?: Command): Promise<TreeNodeParent<TNT>> {
 
-    async function leaf(menuNode: Cmd<any, any>, parent: TreeNodeParent<TNT>) {
+    async function leaf(menuNode: Cmd<any, any>, parent: TreeNodeParent<TNT>, commanderParent: Command | undefined) {
         const cmd = menuNode.cmd();
-        if (prog) {
-            cmd.copyInheritedSettings(prog);
-            prog.addCommand(cmd);
+        if (commanderParent) {
+            cmd.copyInheritedSettings(commanderParent);
+            commanderParent.addCommand(cmd);
             cmd.action(async (...args) => {
                 try {
-                    if (!await menuNode.perm(ctx))
+                    if (!await menuNode.perm(ctx)) {
+                        ctx.output.write(`mad ${cmd.name()}: permission denied\n`);
+                        process.exitCode = 1;
                         return;
+                    }
                     await menuNode.run(ctx, args.at(-2), ...(args.slice(0, -2) as []));
                 } catch (e: any) {
                     ctx.output.write((e?.toString?.() ?? "error") + "\n");
@@ -106,23 +117,33 @@ async function menuToTree(ctx: Ctx, menu: MenuNodeParent, prog?: Command): Promi
         });
     }
 
-    async function node(text: string, children: MenuNode[]) {
+    async function node(nodeMenu: MenuNodeParent, commanderParent: Command | undefined) {
         const tree: TreeNodeParent<TNT> = {
-            text,
+            text: nodeMenu.text,
             childs: []
         };
-        for (const child of children) {
+
+        // If this menu group has a cliName, it owns a Commander
+        // subcommand that nests its children. The interactive menu
+        // doesn't care about cliName; it nests by text.
+        let childCommander: Command | undefined = commanderParent;
+        if (commanderParent && nodeMenu.cliName) {
+            childCommander = commanderParent.command(nodeMenu.cliName).description(nodeMenu.text);
+        }
+
+        for (const child of nodeMenu.children) {
             if ("text" in child) {
-                const childTree = await node(child.text, child.children);
+                const childTree = await node(child, childCommander);
                 if (childTree.childs.length)
                     tree.childs.push(childTree);
-            } else
-                await leaf(child, tree);
+            } else {
+                await leaf(child, tree, childCommander);
+            }
         }
         return tree;
     }
 
-    const root = await node(menu.text, menu.children);
+    const root = await node(menu, prog);
     root.childs.unshift({
         text: "Exit",
         value: null as any

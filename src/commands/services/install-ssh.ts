@@ -1,0 +1,32 @@
+import { createCommand } from "@commander-js/extra-typings";
+import { cmdDef } from "../../menu";
+import { daemon } from "../../daemon/client";
+import { currentUsername } from "../../groups";
+
+export default cmdDef({
+    perm() { return true; },
+    cmd: () => createCommand("install-ssh")
+        .summary("Print install script: share this device's sshd through mad")
+        .argument("<group/device>", "e.g. demo/dev01")
+        .option("--tech-user <name>", "Linux user techs log in as", "mad-tech")
+        .option("--scope <scope>", "user | system", "system")
+        .option("--server-host <host>", "mad server hostname")
+        .option("--server-user <user>", "mad username on the server"),
+    async pty() { return false; },
+    async run(ctx, opts, groupDevice) {
+        const { sshShareScript } = await import("../install");
+        const [group, deviceName] = groupDevice.split("/");
+        if (!group || !deviceName) throw new Error("expected <group>/<device>");
+        const fromOriginal = (process.env.SSH_CONNECTION ?? "").split(" ")[2] || "mad-server";
+        const sshUser = (opts as any).serverUser ?? currentUsername();
+        const [caResp, krlResp] = await Promise.all([daemon.caPubkey(), daemon.caKrl()]);
+        ctx.output.write(sshShareScript({
+            group,
+            deviceName,
+            techUser: (opts as any).techUser ?? "mad-tech",
+            serverHost: (opts as any).serverHost ?? fromOriginal,
+            sshUser,
+            scope: ((opts as any).scope as "user" | "system"),
+        }, caResp.pubkey, krlResp.krl));
+    },
+});

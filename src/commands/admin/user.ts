@@ -48,5 +48,6 @@ export const userForgetKeys = cmdDef({
 
 export default {
     text: "Users",
+    cliName: "user",
     children: [userDelete, userForgetKeys],
 };
