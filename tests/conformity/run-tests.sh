@@ -342,7 +342,7 @@ echo "Test 11: TAP/TUN bytes recorded for alice (waiting up to 70s for the 60s f
 parse_row() {
     # awk: split on tab. Columns: user group kind rx_h tx_h rxp txp first last.
     # We ask --bytes so rx/tx come as raw integers.
-    docker exec madtest-gateway mad usage report --user "$1" --bytes 2>/dev/null \
+    docker exec madtest-gateway mad admin usage report --user "$1" --bytes 2>/dev/null \
         | awk -F'\t' -v u="$1" 'NR>1 && $1==u { print; }'
 }
 alice_row=""
@@ -455,7 +455,7 @@ echo "  consumer received ${got_size} bytes through the forward"
 WAITED=0
 publish_row=""
 while [ $WAITED -lt 130 ]; do
-    publish_row=$(docker exec madtest-gateway mad usage report --kind svc-publish --bytes 2>/dev/null \
+    publish_row=$(docker exec madtest-gateway mad admin usage report --kind svc-publish --bytes 2>/dev/null \
         | awk -F'\t' 'NR>1 && $2=="ga" { print; exit }')
     if [ -n "$publish_row" ]; then break; fi
     sleep 5
@@ -500,7 +500,7 @@ else
     # If non-admin filtering works, alice sees only her own group/kind
     # combos — but we can't see usernames from the row, so we assert by
     # cross-checking: total rows in alice's view < total rows in admin view.
-    admin_count=$(docker exec madtest-gateway mad usage report --bytes 2>/dev/null | awk 'NR>1' | wc -l)
+    admin_count=$(docker exec madtest-gateway mad admin usage report --bytes 2>/dev/null | awk 'NR>1' | wc -l)
     alice_count=$(echo "$alice_view" | awk 'NR>1' | wc -l)
     if [ "$alice_count" -lt "$admin_count" ] && [ "$alice_count" -gt 0 ]; then
         report pass "alice self-serve view ($alice_count rows) is a strict subset of admin view ($admin_count rows)"

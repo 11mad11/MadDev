@@ -7,14 +7,14 @@ import cert from "./cert";
 import tap from "./tap";
 import tun from "./tun";
 import usage from "./usage";
+import system from "./system";
 import admin from "./admin";
 
-// `usage` must come BEFORE `admin`: the admin tree includes an
-// "Usage" parent with cliName="usage", and menuToTree reuses any
-// existing Commander subcommand with that name. Registering the
-// self-serve leaf first means `mad usage` runs the leaf action
-// for everyone, while `mad usage report` / `mad usage export`
-// dispatch into the admin subcommands.
+// Menu and CLI now mirror each other exactly: every node in this tree
+// is reachable both as a menu item AND as `mad <cliName> [child]`.
+// The Admin and System subtrees nest under their respective cliNames
+// (so `mad admin group create`, `mad system setup`), and Help topics
+// nest under `mad help` rather than spilling out to root.
 export default {
     text: "Menu",
     children: [
@@ -26,6 +26,7 @@ export default {
         tap,
         tun,
         usage,
+        system,
         admin,
     ],
 } satisfies MenuNodeParent;

@@ -8,9 +8,6 @@ import { daemon } from "./daemon/client";
 import { runDaemon } from "./daemon/server";
 import { requireLinuxRoot } from "./utils/platform";
 import { runEnroll } from "./commands/enroll";
-import { runSetup } from "./commands/setup";
-import { runUpdate } from "./commands/update";
-import { sshConfigBlock, gatewayHost } from "./utils/sshConfig";
 
 function buildCtx(mode: "shell" | "exec"): Ctx {
     const input = process.stdin;
@@ -35,6 +32,10 @@ async function main() {
     program.name("mad").description("Linux-native SSH gateway helper");
 
     // ---- top-level commands that aren't in the interactive menu --------
+    // (most provisioning lives under `mad system *` — these are the
+    // three exceptions: daemon is started by systemd, enroll is a
+    // one-shot first-connect flow, tun-attach is sshd ForceCommand
+    // glue invoked by the tun client.)
 
     program.command("daemon")
         .description("Run the privileged daemon (root)")
@@ -43,47 +44,21 @@ async function main() {
             await runDaemon();
         });
 
-    program.command("setup")
-        .description("Idempotently provision groups, dirs, CA, sshd snippet, and systemd unit (root)")
-        .action(async () => {
-            requireLinuxRoot("mad setup");
-            await runSetup();
-        });
-
-    program.command("update")
-        .description("git pull + bun install + setup + restart daemon (root)")
-        .action(async () => {
-            requireLinuxRoot("mad update");
-            await runUpdate();
-        });
-
     program.command("enroll")
         .description("First-time enrollment: writes your pubkey to authorized_keys and locks the OTP password")
         .action(async () => {
             await runEnroll();
         });
 
+    // `mad help` (no subcommand) shows the docs index. The Help menu
+    // parent has cliName="help"; the walker reuses this Commander
+    // command and adds each topic as a real subcommand, so
+    // `mad help install` etc. become discoverable in --help and tab
+    // completion. Unknown topics get a Commander "unknown command" —
+    // that's intentional per the menu/CLI alignment decision.
     program.command("help")
         .description("Render a doc page in the terminal")
-        .argument("[topic]", "doc file under docs/ (omit for the index)")
-        .action((topic) => runHelpCli(topic));
-
-    program.command("ssh-config")
-        .description("Print an ssh_config Host block for paste-into-~/.ssh/config")
-        .option("--alias <name>", "Host alias", "mad")
-        .option("--host <hostname>", "Override the gateway hostname")
-        .action(async (opts) => {
-            const host = gatewayHost(opts.host);
-            process.stdout.write(sshConfigBlock(opts.alias!, host, currentUsername()));
-        });
-
-    program.command("doctor")
-        .description("Diagnose mad client setup; can install missing Windows L2 driver")
-        .option("--install-l2-driver", "Download and run the TAP-Windows6 installer (Windows only, UAC)")
-        .action(async (opts) => {
-            const { runDoctor } = await import("./commands/doctor");
-            await runDoctor(opts);
-        });
+        .action(() => runHelpCli(undefined));
 
     program.command("tun-attach")
         .description("Gateway-side glue for `ssh <gw> mad tun-attach <group>` — pumps length-prefixed Ethernet frames between stdio and a daemon-allocated tap")

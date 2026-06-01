@@ -77,6 +77,11 @@ function topicCmd(topic: string): Cmd {
 
 const helpMenu: MenuNodeParent = cmdMenu({
     text: "Help",
+    // cliName: "help" — topics nest under `mad help` instead of bleeding
+    // out to the root as `mad overview`, `mad install`, etc. The plain
+    // `mad help` invocation (no subcommand) still falls through to
+    // runHelpCli(undefined) registered in cli.ts, which prints the index.
+    cliName: "help",
     children: [helpIndex, ...Object.keys(TOPIC_TITLES).map(topicCmd)],
 });
 
