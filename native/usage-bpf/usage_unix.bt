@@ -76,11 +76,16 @@ kprobe:unix_stream_recvmsg
 interval:s:60 {
     printf("MAD_USAGE_TICK %u\n", nsecs);
     /* @path is keyed by sk pointer — emit it first so the user-space
-     * parser can join sk→path before reading the byte tallies. */
+     * parser can join sk→path before reading the byte tallies. We
+     * intentionally do NOT clear @path here: clearing races against
+     * long-lived connections whose connect fires once but whose bytes
+     * span many ticks, leaving subsequent ticks with byte counters
+     * that have no path to join against. The trade-off is unbounded
+     * growth — fine for the bench, a future libbpf/aya port should
+     * GC entries whose sk hasn't been seen in @bytes_* for N ticks. */
     print(@path);
     print(@bytes_tx);
     print(@bytes_rx);
-    clear(@path);
     clear(@bytes_tx);
     clear(@bytes_rx);
     printf("MAD_USAGE_END\n");

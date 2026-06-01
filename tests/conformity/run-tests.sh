@@ -342,24 +342,30 @@ else
 fi
 
 # ---- test 13b: Phase 2 svc-publish row appears after forward traffic ---
-# Set up a fresh `ssh -R` exposing a TCP server on alice, then push
-# ~1 MiB through bob's `ssh -L`. BPF counts bytes on the unix socket;
-# the daemon's 60s collector tick resolves the inode → (group=ga,
-# service=web2, owner=alice) and inserts an svc-publish row.
+# Set up a fresh `ssh -R` exposing a TCP server on alice, then push a
+# blob through bob's `ssh -L`. BPF counts bytes on the unix socket; the
+# daemon's 60s collector tick resolves the connecting sock → path via
+# the @path map maintained at unix_stream_connect and inserts an
+# svc-publish row attributed to the listener's owner.
+BLOB_SIZE=262144   # 256 KiB — fits well inside the SSH window so the
+                   # whole transfer completes within nc's idle timeout.
+THRESHOLD=131072   # 128 KiB total rx+tx (BPF counts both directions on
+                   # the connecting socket; framing overhead means
+                   # tx≫BLOB_SIZE, rx is small).
 echo
-echo "Test 13b: BPF collector records svc-publish bytes (push 1 MiB, wait ≤90s for the 60s flush tick)"
+echo "Test 13b: BPF collector records svc-publish bytes (push ${BLOB_SIZE}B, wait ≤90s for the 60s flush tick)"
 if [ $BPF_RUNNING -eq 0 ]; then
     echo "  (skipped — bpftrace collector not running)"
 else
 # clean any leftover from previous Phase 2 runs
 docker exec madtest-gateway rm -f /run/mad/groups/ga/web2.sock 2>/dev/null || true
 
-# server: alice loops a 1 MiB blob back on each connection
-docker exec madtest-alice bash -c '
-    head -c 1048576 /dev/urandom > /tmp/blob.bin
-    nohup bash -c "while true; do nc -l -p 8889 -q 1 < /tmp/blob.bin; done" \
+# server: alice loops the blob back on each connection
+docker exec madtest-alice bash -c "
+    head -c $BLOB_SIZE /dev/urandom > /tmp/blob.bin
+    nohup bash -c 'while true; do nc -l -p 8889 -q 1 < /tmp/blob.bin; done' \
         >/dev/null 2>&1 &
-' 2>/dev/null
+" 2>/dev/null
 sleep 1
 # alice publishes the service
 docker exec -d madtest-alice bash -c '
@@ -373,7 +379,7 @@ for i in $(seq 1 15); do
     sleep 1
 done
 
-# bob consumes via ssh -L and reads the 1 MiB blob through it
+# bob consumes via ssh -L and reads the blob through it
 docker exec -d madtest-bob bash -c '
     exec ssh -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes \
         -i /init-keys/bob \
@@ -382,7 +388,7 @@ docker exec -d madtest-bob bash -c '
 ' 2>/dev/null
 sleep 2
 docker exec madtest-bob bash -c '
-    echo "" | nc -w 5 127.0.0.1 9001 > /tmp/got.bin 2>/dev/null
+    echo "" | nc -w 15 127.0.0.1 9001 > /tmp/got.bin 2>/dev/null
 '
 got_size=$(docker exec madtest-bob stat -c "%s" /tmp/got.bin 2>/dev/null || echo 0)
 echo "  consumer received ${got_size} bytes through the forward"
@@ -408,12 +414,10 @@ else
     pub_rx=$(echo "$publish_row" | awk -F'\t' '{print $4}')
     pub_tx=$(echo "$publish_row" | awk -F'\t' '{print $5}')
     pub_total=$(( pub_rx + pub_tx ))
-    # We pushed 1 MiB downstream; the BPF script sums both directions
-    # on the connecting socket, so total should be at least ~500 KiB.
-    if [ "$pub_user" = "alice" ] && [ "$pub_group" = "ga" ] && [ "$pub_total" -gt 524288 ]; then
-        report pass "svc-publish row: alice/ga rx=${pub_rx} tx=${pub_tx} (≥512 KiB through web2)"
+    if [ "$pub_user" = "alice" ] && [ "$pub_group" = "ga" ] && [ "$pub_total" -gt "$THRESHOLD" ]; then
+        report pass "svc-publish row: alice/ga rx=${pub_rx} tx=${pub_tx} (>$(( THRESHOLD / 1024 )) KiB through web2)"
     else
-        report fail "svc-publish content" "row='$publish_row' total=${pub_total}B (expected alice/ga and >512 KiB)"
+        report fail "svc-publish content" "row='$publish_row' total=${pub_total}B (expected alice/ga and >$(( THRESHOLD / 1024 )) KiB)"
     fi
 fi
 
