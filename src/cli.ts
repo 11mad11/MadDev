@@ -539,6 +539,14 @@ async function main() {
             process.stdout.write(`${r.otp}\n`);
         });
 
+    program.command("doctor")
+        .description("Diagnose mad client setup; can install missing Windows L2 driver")
+        .option("--install-l2-driver", "Download and run the TAP-Windows6 installer (Windows only, UAC)")
+        .action(async (opts) => {
+            const { runDoctor } = await import("./commands/doctor");
+            await runDoctor(opts);
+        });
+
     program.action(async () => {
         const ctx = buildCtx("shell");
         const code = await runMenu(ctx, menu);

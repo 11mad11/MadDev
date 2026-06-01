@@ -222,3 +222,66 @@ Earlier L3 used `/24` on both ends, the same prefix as the L2 bridge. That creat
 A common instinct is "more buffer = fewer drops = better throughput." It's wrong under congestion: large buffers just hide the problem, letting latency balloon (bufferbloat) before TCP notices. `fq_codel` deliberately drops a packet when the queue's standing latency exceeds 5 ms, telling TCP to back off *immediately*. A short `txqueuelen` keeps the kernel's own queue from masking that signal. The end result is throughput close to line rate but with RTT staying within a few ms of the unloaded baseline.
 
 This combination only works because of the framing fix above. With socat in the loop, AQM drops looked indistinguishable from socat's frame-boundary losses, and TCP was reacting to noise. Now the only drops are real congestion signals.
+
+---
+
+## Windows clients: a different shape
+
+Linux and macOS clients open `/dev/net/tun` directly and run the framing pump in-process via `bun:ffi` against libc. Windows can't do either: there's no `/dev/net/tun`, and the TUN/TAP devices Windows DOES have (wintun for L3, TAP-Windows6 for L2) are kernel drivers reached through Win32 APIs, not file paths. So we ship a small Rust native module — `mad_wintap.dll` — that the Windows binary loads via `bun:ffi`.
+
+### Stack
+
+```
+Windows mad.exe ──► bun:ffi ──► mad_wintap.dll  (Rust cdylib)
+                                  │
+                                  ├─ wintun.dll          (L3, signed redistributable)
+                                  │     └─ wintun kernel driver
+                                  └─ TAP-Windows6 driver  (L2, OpenVPN-signed)
+                                        └─ tap0901 kernel driver
+```
+
+The native module exposes a small C ABI (`mad_open`, `mad_pump_start_ssh`, `mad_pump_wait_handshake`, `mad_pump_is_running`, `mad_close`, …) that mirrors the openTap/pump shape of the Linux/macOS path. From the JS side the only Windows-specific code is `src/commands/windowsTunClient.ts`, which handles the things Linux gets from the kernel for free: adapter creation, IP assignment via `netsh`, and choosing the right SSH executable (more on that below).
+
+The frame pump itself lives entirely in Rust — three threads per session: TAP→ssh, ssh→TAP, and a stderr scanner that surfaces `MAD_TUN_OK` for the JS handshake while passing every other ssh stderr line through to our own stderr. That keeps the data path zero-JS once the tunnel is established, and uses Win32 manual-reset events + WaitForMultipleObjects rather than fd-based polling.
+
+### The Microsoft-OpenSSH stdin gotcha
+
+Windows 10/11 ship Microsoft OpenSSH at `C:\Windows\System32\OpenSSH\ssh.exe`. It treats its stdin handle in **text mode**:
+
+- Bytes `0x0D 0x0A` get collapsed to `0x0A` (CRLF → LF)
+- `0x1A` is interpreted as Ctrl-Z, an EOF marker
+
+Both translations silently corrupt our binary frame stream. Symptoms when this happens: the TX-side frame counter grows happily, sshd on the gateway sees a trickle of bytes, and ping replies never come back. The pump looks healthy from every counter you can read.
+
+Git for Windows bundles an MSYS-based `ssh.exe` at `C:\Program Files\Git\usr\bin\ssh.exe` that handles binary stdin correctly. `windowsTunClient.ts::resolveSshExe()` prefers Git's, falls back to whatever's on PATH with a loud warning, and respects a `MAD_SSH=<path>` override.
+
+We also pass `-T -e none` regardless, to disable any leftover TTY allocation or escape-character processing.
+
+### L3 mode (wintun) — production
+
+1. `winNative.loadWintun()` — extracts `wintun.dll` from the compiled `mad.exe` to `%LOCALAPPDATA%\mad\native\`, sets it as the DLL search dir, then `LoadLibraryW`s it.
+2. `winNative.open(group, "l3")` — `WintunCreateAdapter("mad-<group>", ...)`, then `WintunStartSession` with a 2 MiB ring buffer. The adapter appears in Network Connections immediately.
+3. `winNative.pumpStartSsh(handle, sshExe, args)` — spawns ssh as a child of `mad_wintap.dll`, owns its stdio pipes, and starts the three pump threads.
+4. `winNative.pumpWaitHandshake(handle, 15000)` — blocks until ssh stderr emits `MAD_TUN_OK <ifname> <ip> peer=<peer> group=<g> mode=l3`.
+5. `netsh interface ipv4 set address name="mad-<group>" static <ip> 255.255.255.0` — assigns the address. /24 mask gives Windows an on-link route for the whole group subnet, which is what makes cross-client reachability work.
+6. JS polls `winNative.pumpIsRunning(handle)` until the pump exits (ssh died, SIGINT, or `mad tun leave`), then `winNative.close(handle)` releases the adapter.
+
+Tested working end-to-end at **216 Mbps** TCP single-stream, 0% loss at 100 Mbps UDP.
+
+### L2 mode (TAP-Windows6) — scaffolded
+
+Same JS flow, but `winNative.open(group, "l2")` opens an existing TAP-Windows6 device at `\\.\Global\<NetCfgInstanceId>.tap` with `FILE_FLAG_OVERLAPPED`, then issues `TAP_WIN_IOCTL_SET_MEDIA_STATUS(1)` to bring it "connected." Read is one overlapped `ReadFile` in flight at a time with the completion event re-used across iterations; the recv_wait_handle exposed to the pump IS that event. Write is a synchronous overlapped `WriteFile` per frame.
+
+Adapter discovery walks the Net-class registry path
+`HKLM\SYSTEM\CurrentControlSet\Control\Network\{4D36E972-E325-11CE-BFC1-08002BE10318}\<guid>\Connection`
+and matches on the user-visible `Name` REG_SZ — `mad-<group>`. The subkey name IS the NetCfgInstanceId GUID we need for the device path.
+
+L2 is gated behind a driver-installed check (`mad_l2_driver_installed` probes for `HKLM\SYSTEM\CurrentControlSet\Services\tap0901`). If the driver isn't present, mad surfaces clear install instructions instead of crashing.
+
+### Packaging
+
+`bun build --compile --target=bun-windows-x64` embeds both `wintun.dll` and `mad_wintap.dll` into the final `mad.exe` via the `import x from "./file.dll" with { type: "file" }` attribute. On first run `winAssets.extractDlls()` copies them out to `%LOCALAPPDATA%\mad\native\` (a stable per-user path — wintun's docs recommend a stable location, and `bun build --compile`'s built-in extraction dir is recreated per launch). Subsequent runs skip the copy when the bytes match what's already there.
+
+### Stale-adapter sweep
+
+On every `mad tap/tun join` startup, `windowsTunClient.ts::sweepStaleAdapters` reads `~/.config/mad/tun-state.json`, finds entries whose owning PID is no longer alive, calls `winNative.deleteWintunAdapter(name)` to reclaim each (wintun's auto-abandonment timeout is ~60 s — we don't want to wait), and prunes the state file. Cheap and idempotent.

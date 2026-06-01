@@ -47,11 +47,9 @@ export type TunMode = "l2" | "l3";
 
 export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise<void> {
     if (process.platform === "win32") {
-        process.stderr.write("mad tun join is not yet supported on Windows.\n");
-        process.stderr.write("  Workaround for direct-IP P2P games:\n");
-        process.stderr.write("    mad service register <group>/<name> localhost:<gamePort>   (host)\n");
-        process.stderr.write("    mad service use <gw>/<group>/<name> <gamePort>            (guests)\n");
-        process.exit(2);
+        const { windowsTunJoin } = await import("./windowsTunClient");
+        await windowsTunJoin(gwGroup, requestedMode);
+        return;
     }
     if (process.platform !== "linux" && process.platform !== "darwin") {
         process.stderr.write(`mad tun join requires Linux or macOS (you are on ${process.platform}).\n`);
@@ -140,6 +138,14 @@ export async function tunJoin(gwGroup: string, requestedMode?: TunMode): Promise
         const ourBase = ourIp.split("/")[0];
         const peerBase = assigned.ip.split("/")[0];
         spawnSync("ip", ["addr", "add", `${ourBase}/32`, "peer", `${peerBase}/32`, "dev", localIfname], { stdio: "inherit" });
+        // /32 + peer gives us a route only to the gateway end of the
+        // tunnel. To reach other clients in the same group we need a
+        // subnet route. MAD_TUN_OK doesn't currently carry the subnet
+        // so we derive it as the /24 around our own IP — matches mad's
+        // current /24-only convention. TODO(daemon): emit `subnet=...`
+        // in MAD_TUN_OK so this can be exact.
+        const subnet = ourBase.split(".").slice(0, 3).join(".") + ".0/24";
+        spawnSync("ip", ["route", "add", subnet, "dev", localIfname], { stdio: "ignore" });
     } else {
         spawnSync("ip", ["addr", "add", ourIp, "dev", localIfname], { stdio: "inherit" });
     }

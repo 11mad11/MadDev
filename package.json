@@ -13,7 +13,9 @@
     "build:linux": "bun build --compile --target=bun-linux-x64 ./src/cli.ts --outfile=dist/mad-linux-x64",
     "build:macos-x64": "bun build --compile --target=bun-darwin-x64 ./src/cli.ts --outfile=dist/mad-darwin-x64",
     "build:macos-arm": "bun build --compile --target=bun-darwin-arm64 ./src/cli.ts --outfile=dist/mad-darwin-arm64",
-    "build:windows": "bun build --compile --target=bun-windows-x64 ./src/cli.ts --outfile=dist/mad-windows-x64.exe",
+    "build:windows-native": "cd native/windows-tap && cargo build --release --target x86_64-pc-windows-gnu",
+    "build:windows": "bun run build:windows-native && bun build --compile --target=bun-windows-x64 ./src/cli.ts --outfile=dist/mad-windows-x64.exe",
+    "smoke:windows-native": "bun run scripts/smoke-windows-native.ts",
     "build:all": "bun run build:linux && bun run build:macos-x64 && bun run build:macos-arm && bun run build:windows",
     "release": "release-it",
     "changeset": "changeset"
