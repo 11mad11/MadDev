@@ -3,7 +3,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
         openssh-server sudo iproute2 iputils-ping tcpdump iperf3 \
         curl unzip ca-certificates jq procps net-tools bridge-utils \
-        passwd \
+        passwd sqlite3 bpftrace \
     && rm -rf /var/lib/apt/lists/*
 
 # Bun for the mad runtime. Copy to /usr/local/bin/ (mode 755) so the

@@ -16,7 +16,12 @@ services:
       dockerfile: Dockerfile.gateway
     hostname: gateway
     container_name: madtest-gateway
-    cap_add: [NET_ADMIN]
+    # SYS_ADMIN + seccomp=unconfined are needed by the bpftrace-based
+    # Phase 2 usage collector: docker's default seccomp blocks the
+    # bpf(2) syscall, and the kprobes attach via /sys/kernel/debug.
+    cap_add: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
+    security_opt:
+      - seccomp=unconfined
     # ip_forward must be on for L3 client-to-client routing through
     # the per-group bridges. Docker disables it inside containers by
     # default; the sysctl below flips it back on for this netns only.
@@ -35,6 +40,14 @@ services:
     volumes:
       - /root/mad:/mad:ro
       - ./keys:/init-keys:ro
+      # bpftrace attaches kprobes through tracefs. Inside an LXC,
+      # /sys/kernel/debug is empty by default — the host must first
+      # mount tracefs explicitly:
+      #     mount -t tracefs tracefs /sys/kernel/tracing
+      # Then docker bind-mounts it into the gateway container.
+      # BTF for CO-RE is already at /sys/kernel/btf/vmlinux which
+      # docker exposes by default.
+      - /sys/kernel/tracing:/sys/kernel/tracing:rw
     networks:
       madnet:
         ipv4_address: 10.99.0.10

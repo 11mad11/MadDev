@@ -76,10 +76,54 @@ docker compose up -d
 | 7 | `ssh -R` socket creation | alice's `ssh -R …web.sock` binds with mode 0660 + group `ga` (StreamLocalBindMask 0117 + 2770-setgid dir) |
 | 8 | `ssh -L` service-forwarding works | bob's `ssh -L … service ping ga/web` chains through to alice's nc listener; canary bytes round-trip |
 | 9 | Cross-group `ssh -L` blocked | carol (gB) cannot read alice's gA socket — denied at the 2770 group-dir level |
+| 10 | Usage DB file properties | `/var/lib/mad/usage.db` exists with mode 0640 root:mad after daemon boot |
+| 11 | TAP/TUN bytes recorded | After tests 4–9 + bonus, alice's `mad usage report --user alice` shows ≥10 MiB total rx+tx (polls up to 70 s for the 60 s flush tick) |
+| 12 | Per-user attribution | alice's and bob's usage rows are distinct (per-uid, not aggregated by group) |
+| 13a | Phase 2 BPF collector running | `bpftrace usage_unix.bt` is visible in the gateway container after daemon startup |
+| 13b | svc-publish bytes recorded | Fresh `ssh -R` + `ssh -L` chain pushes 1 MiB through `ga/web2.sock`; within 90 s the daemon's BPF collector inserts an `svc-publish` row attributed to alice with ≥512 KiB total |
+| 13 | Self-serve view is uid-scoped | alice's `ssh alice@gateway usage` returns a strict subset of root's `mad usage report` — daemon clamps the filter to `ctx.peer.uid` |
 
 Plus a bonus throughput probe: iperf3 TCP 4×parallel `alice → bob`
 through gateway IP-forwarding. Last measured: **263 Mbps** on the
 proxmox docker LXC (16 cores / 16 GB).
+
+Test 11 polls up to 70 s for the 60 s Phase 1 flush. Test 13b polls
+up to 90 s for the bpftrace 60 s interval to fire. Total bench
+wall-clock is ~3–4 min.
+
+Phase 2 dependencies the gateway container needs (set in
+`docker-compose.yml`):
+
+- `cap_add: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]` — `SYS_ADMIN` covers
+  the bpf(2) syscall on kernels without split BPF caps and the
+  kprobe attach.
+- `security_opt: - seccomp=unconfined` — docker's default seccomp
+  profile blocks `bpf(2)` outright.
+- `volumes: - /sys/kernel/tracing:/sys/kernel/tracing:rw` — bpftrace
+  attaches kprobes through tracefs.
+- `bpftrace` installed in `Dockerfile.gateway` (Debian Bookworm
+  has it in main).
+
+BTF for CO-RE relocations (`/sys/kernel/btf/vmlinux`) is exposed
+through `/sys` automatically.
+
+**LXC host prep (one-time, before `docker compose up`):** Unprivileged
+LXCs don't expose tracefs by default. On the LXC, run:
+
+```sh
+mount -t tracefs tracefs /sys/kernel/tracing
+```
+
+This is not persistent across LXC restart. To persist, add to the
+Proxmox LXC config:
+
+```
+lxc.mount.entry: tracefs sys/kernel/tracing tracefs gid=0,defaults 0 0
+```
+
+Without this the gateway container starts cleanly but the daemon
+logs `bpfUsage: bpftrace not in PATH` or `bpftrace exited code=1`,
+Phase 2 tests skip with a clear message, and Phase 1 still works.
 
 ## Conformity properties this validates
 
