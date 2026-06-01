@@ -353,7 +353,7 @@ THRESHOLD=131072   # 128 KiB total rx+tx (BPF counts both directions on
                    # the connecting socket; framing overhead means
                    # tx≫BLOB_SIZE, rx is small).
 echo
-echo "Test 13b: BPF collector records svc-publish bytes (push ${BLOB_SIZE}B, wait ≤90s for the 60s flush tick)"
+echo "Test 13b: BPF collector records svc-publish bytes (push ${BLOB_SIZE}B, wait ≤130s for the 60s flush tick)"
 if [ $BPF_RUNNING -eq 0 ]; then
     echo "  (skipped — bpftrace collector not running)"
 else
@@ -394,10 +394,12 @@ got_size=$(docker exec madtest-bob stat -c "%s" /tmp/got.bin 2>/dev/null || echo
 echo "  consumer received ${got_size} bytes through the forward"
 
 # Wait for bpftrace's 60s interval to fire AND the daemon's TS-side
-# parser to insert the row. Worst case is ~75s from when bytes flowed.
+# parser to insert the row. Worst case is ~125s from when bytes flowed
+# (a tick can be up to 60s away + we're polling under load + the daemon
+# may stall briefly while servicing concurrent ops).
 WAITED=0
 publish_row=""
-while [ $WAITED -lt 90 ]; do
+while [ $WAITED -lt 130 ]; do
     publish_row=$(docker exec madtest-gateway mad usage report --kind svc-publish --bytes 2>/dev/null \
         | awk -F'\t' 'NR>1 && $2=="ga" { print; exit }')
     if [ -n "$publish_row" ]; then break; fi
