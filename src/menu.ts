@@ -20,6 +20,13 @@ export interface Cmd<Args extends any[] = [], Opts extends OptionValues = {}> {
     cmd(): Command<Args, Opts>;
     pty(ctx: Ctx): Promise<[Args, ConvertOpts<Opts>] | false>;
     run(ctx: Ctx, opts: ConvertOpts<Opts>, ...args: Args): Promise<void>;
+    /**
+     * If true, the leaf is skipped when building the interactive menu
+     * tree but still registered on the CLI. Use for sshd ForceCommand
+     * targets (`service hold`, `service ping`) and other machine-only
+     * subcommands that would be confusing to humans clicking through.
+     */
+    menuHidden?: boolean;
 }
 
 export function cmdDef<T extends Cmd<any, any>>(cmd: T): T {
@@ -109,6 +116,7 @@ export async function menuToTree(ctx: Ctx, menu: MenuNodeParent, prog?: Command)
                 }
             });
         }
+        if (menuNode.menuHidden) return;
         if (!await menuNode.perm(ctx))
             return;
         parent.childs.push({

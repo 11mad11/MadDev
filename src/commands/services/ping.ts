@@ -4,6 +4,7 @@ import { cmdDef } from "../../menu";
 
 export default cmdDef({
     perm() { return true; },
+    menuHidden: true, // sshd ForceCommand target — paired with `ssh -L`, not a human-pick item
     cmd: () => createCommand("ping")
         .summary("Check the registered socket is bound; hold while it is. Use with ssh -L instead of -N.")
         .argument("<groupname>", "group/name")

@@ -11,7 +11,17 @@ export default cmdDef({
         .option("--scope <scope>", "user | system", "user")
         .option("--server-host <host>", "mad server hostname for ssh_config")
         .option("--server-user <user>", "mad username on the server"),
-    async pty() { return false; },
+    async pty(ctx) {
+        const groupname = await ctx.inquirer.input({
+            message: "group/name (where to publish the service)",
+            validate: (v: string) => /^[^/]+\/[^/]+$/.test(v.trim()) || "expected <group>/<name>",
+        });
+        const target = await ctx.inquirer.input({
+            message: "local addr:port the service runs on (e.g. 127.0.0.1:8080)",
+            validate: (v: string) => /^\S+:\d+$/.test(v.trim()) || "expected addr:port",
+        });
+        return [[groupname.trim(), target.trim()] as const, {}] as any;
+    },
     async run(ctx, opts, groupname, target) {
         const { forwardingScript } = await import("../install");
         const [g, n] = groupname.split("/");

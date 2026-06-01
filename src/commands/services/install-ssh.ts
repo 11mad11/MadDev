@@ -12,7 +12,13 @@ export default cmdDef({
         .option("--scope <scope>", "user | system", "system")
         .option("--server-host <host>", "mad server hostname")
         .option("--server-user <user>", "mad username on the server"),
-    async pty() { return false; },
+    async pty(ctx) {
+        const groupDevice = await ctx.inquirer.input({
+            message: "group/device (e.g. demo/dev01)",
+            validate: (v: string) => /^[^/]+\/[^/]+$/.test(v.trim()) || "expected <group>/<device>",
+        });
+        return [[groupDevice.trim()] as const, {}] as any;
+    },
     async run(ctx, opts, groupDevice) {
         const { sshShareScript } = await import("../install");
         const [group, deviceName] = groupDevice.split("/");

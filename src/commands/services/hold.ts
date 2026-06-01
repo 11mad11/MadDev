@@ -5,6 +5,7 @@ import { cmdDef } from "../../menu";
 
 export default cmdDef({
     perm() { return true; },
+    menuHidden: true, // sshd ForceCommand target — never a human-pick item
     cmd: () => createCommand("hold")
         .summary("Hold an ssh -R session; on boot, sweep any orphan sockets in the same group dir")
         .argument("<groupname>", "group/name (the path = /run/mad/groups/<group>/<name>.sock)"),
