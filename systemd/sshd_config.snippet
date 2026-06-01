@@ -14,7 +14,8 @@ Match Group mad-users
     StreamLocalBindMask 0117
     StreamLocalBindUnlink yes
     PasswordAuthentication yes
-    # No PermitTunnel: mad uses regular SSH exec channels and a userspace
-    # frame proxy (mad tun-attach + the root daemon's socat) to carry
-    # Ethernet frames over the same SSH connection, which works on
-    # unprivileged LXCs / containers where sshd can't keep CAP_NET_ADMIN.
+    # No PermitTunnel: mad uses regular SSH exec channels and an in-process
+    # length-prefix frame pump (utils/tapPipe.ts on Linux/macOS,
+    # native/windows-tap on Windows) to carry Ethernet/IP frames over the
+    # same SSH connection. Works on unprivileged LXCs / containers where
+    # sshd can't keep CAP_NET_ADMIN.

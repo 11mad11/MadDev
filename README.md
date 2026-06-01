@@ -22,10 +22,10 @@ cd /opt/mad
 bun install --production
 
 # 2. Run the idempotent setup. It creates groups (mad, mad-users, mad-admin),
-#    the otp user, /etc/mad/{ca,groups}, /var/lib/mad, /run/mad, the CA key,
-#    /etc/ssh/mad_ca.pub, /etc/ssh/sshd_config.d/99-mad.conf,
-#    /etc/systemd/system/mad-daemon.service, /usr/bin/mad, then enables and
-#    starts the daemon and reloads sshd if anything changed.
+#    /etc/mad/ca, /var/lib/mad, /run/mad, the CA key, /etc/ssh/mad_ca.pub,
+#    /etc/ssh/sshd_config.d/99-mad.conf, /etc/systemd/system/mad-daemon.service,
+#    /usr/bin/mad, then enables and starts the daemon and reloads sshd if
+#    anything changed.
 sudo bun run src/cli.ts setup
 ```
 
@@ -129,11 +129,18 @@ Host dev01
 
 - `mad` — interactive menu (this is your login shell when in `mad-users`).
 - `mad daemon` — run the privileged daemon (use the systemd unit in production).
+- `mad gateway {add,ls,rm,test}` — manage gateways in `~/.ssh/config`.
 - `mad ca {pubkey,sign,krl}` — CA operations (signed KRL fetch lives here).
-- `mad cert {ls,refresh,revoke,unrevoke}` — issued cert inventory and revocation.
-- `mad group {create,ls,members,add,rm}` — group management (root).
-- `mad user {del,forget-keys,lockout}` — user management (root); `lockout` revokes certs + clears `authorized_keys`.
-- `mad service {ls,register,use}` — discoverability + prints the right `ssh -R` / `ssh -L`.
-- `mad tap {join,leave,ls}` — L2 VPN.
-- `mad otp <username>` — ensure the Linux user, mint a 15-min OTP, set it as their Linux password (root).
+- `mad cert {refresh,ls,revoke,unrevoke}` — issued cert inventory and revocation.
+- `mad group {create,ls,members,add,rm}` — group management (admin).
+- `mad user {del,forget-keys}` — user management (admin).
+- `mad service {ls,register,use,hold,ping,install,install-ssh}` — discoverability + prints the right `ssh -R` / `ssh -L`.
+- `mad tap {join,leave,ls}` — L2 VPN (Linux/macOS/Windows).
+- `mad tun {join,leave,ls}` — L3 point-to-point tunnel (Linux/macOS/Windows).
+- `mad otp <username>` — ensure the Linux user, mint a 15-min OTP, set it as their Linux password (admin).
 - `mad enroll` — first-time pubkey upload; signs your key, writes authorized_keys, locks the OTP password. Run as the user being enrolled.
+- `mad doctor [--install-l2-driver]` — Windows-side diagnostics; can fetch + install TAP-Windows6 with UAC.
+
+## Windows clients
+
+`mad tap/tun join` works on Windows via a Rust native module (`native/windows-tap/`) that mad loads through `bun:ffi`. L3 uses wintun; L2 uses TAP-Windows6 (driver installable via `mad doctor`). See [docs/internal/tun-tap-walkthrough.md](docs/internal/tun-tap-walkthrough.md) for the architecture and the Microsoft-OpenSSH text-mode-stdin gotcha.

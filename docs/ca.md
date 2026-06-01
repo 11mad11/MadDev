@@ -20,7 +20,7 @@ Useful when bringing up a new device that needs to trust mad. The install script
 
 ## Signing a user pubkey
 
-The daemon ops `consume-otp`, `ca-sign`, and `refresh-cert` all wrap the same `CA.signSSHKey(pubkey, username, principals[])` method, which shells out to:
+The daemon ops `ca-sign` and `refresh-cert` both wrap the same `CA.signSSHKey(pubkey, username, principals[])` method, which shells out to:
 
 ```
 ssh-keygen -s /etc/mad/ca/ca.key \

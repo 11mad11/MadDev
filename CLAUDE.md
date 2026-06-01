@@ -26,27 +26,41 @@ There is no lint, no test runner. Verification is end-to-end (see README and the
 
 ### Entry (`src/cli.ts`)
 
-Commander root. Subcommands:
+Thin Commander root. Only the truly-top-level (not-in-menu) commands are defined inline:
 - `daemon` — spawns `runDaemon()` (root-only).
-- `enroll` — runs `runEnroll()`. Invoked by an enrolling user via `ssh user@gw enroll` after `mad otp` has set their Linux password to the OTP. Identifies the caller via `process.getuid()`, asks daemon to sign their pubkey + write authorized_keys + `passwd -l`.
-- `ca {pubkey,sign}` — local CA call if uid 0, daemon call otherwise.
-- `group {create,ls,members,add,rm}` — wraps `groupadd`/`usermod`/`gpasswd`/`getent`.
-- `user {del,forget-keys}` — wraps `userdel` / truncates `~user/.ssh/authorized_keys`.
-- `service {ls,register,use}` — walks `/run/mad/groups/*/` and prints the right `ssh -R` / `ssh -L`.
-- `tun {join,leave,ls}` (client; Linux/macOS, root) — opens an `ssh -w 0:0 <gw> mad tun-attach <group> tunN` session, daemon-side mad attaches the tun device into the group's bridge and assigns an IP. Replaces the old gateway-resident `tap`.
-- `gateway {add,ls,rm,test}` (client) — reads/writes `~/.ssh/config` Host blocks marked with `SetEnv MAD_GATEWAY=1`. Multi-gateway `service ls` fans out across these via parallel `ssh <alias> service ls --json`.
-- `tun-attach <group> <ifname>` — gateway-side glue called via SSH_ORIGINAL_COMMAND when a client runs `mad tun join`.
-- `otp <user>` — root-only, asks the daemon to mint an OTP.
+- `setup`, `update` — root-only provisioning.
+- `enroll` — invoked by an enrolling user via `ssh user@gw enroll` after `mad otp` has set their Linux password to the OTP. Identifies the caller via `process.getuid()`, asks daemon to sign their pubkey + write authorized_keys + `passwd -l`.
+- `help [topic]` — render a doc page.
+- `ssh-config` — print an ssh_config Host block.
+- `doctor` — Windows-side diagnostics + `--install-l2-driver` UAC flow.
+- `tun-attach <group>` — gateway-side glue called via SSH_ORIGINAL_COMMAND.
 
-Default action (no args): builds a `Ctx` (username, uid, group memberships, stdin/stdout streams, inquirer wrapper) and runs `runMenu(ctx, menu)` from `src/menu.ts`.
+Everything else flows through the menu tree (`menuToTree(ctx, menu, program)` side-effects the Commander program with subcommands derived from the menu). The menu tree owns one Cmd per leaf with its own `perm(ctx)`, so the same `perm: isAdmin` enforces both menu visibility AND CLI dispatch — there's no parallel direct-Commander definition that could bypass the gate.
+
+Default action (no args, TTY): builds a `Ctx` (username, uid, group memberships, stdin/stdout streams, inquirer wrapper) and runs `runMenu(ctx, menu)` from `src/menu.ts`.
 
 `SSH_ORIGINAL_COMMAND` handling: if set (sshd's ForceCommand passes the user-requested command through this env var), it's whitespace-split and parsed as argv. Otherwise `process.argv` is used directly.
 
 ### Menu (`src/menu.ts`, `src/commands/`)
 
-The `Cmd` interface (`perm`/`cmd`/`pty`/`run`) and the inquirer-tree-based menu loop. `menuToTree` recursively builds an `inquirer.tree` from a `MenuNodeParent`, filtering out leaves the current `Ctx` can't see (the `perm(ctx)` check). `runExec` adds the same `Cmd`s to a Commander instance for non-interactive use.
+The `Cmd` interface (`perm`/`cmd`/`pty`/`run`) + the inquirer-tree-based menu loop. `menuToTree` recursively builds both an `inquirer.tree` (for interactive menu) and adds Commander subcommands to a passed-in `Command` instance (for CLI dispatch). Each leaf's `cmd.action(...)` wrapper calls `menuNode.perm(ctx)` first — denial writes `mad <cmd>: permission denied` + `exit 1`.
 
-The menu tree (`src/commands/index.ts`) is: Help, Services, Networking, Admin. Admin (Group/Users/CA/OTP) is gated by membership in `mad-admin`.
+`MenuNodeParent.cliName?: string` controls Commander nesting: when set, the parent becomes a Commander subcommand and its children nest under it (`mad gateway add`, `mad cert revoke`); when unset (e.g. the "Admin" grouping), the children are added to the parent Commander directly so they surface at the root (`mad group create`, not `mad admin group create`).
+
+The menu tree (`src/commands/index.ts`) is: Help / Gateways / Services / CA / Certs / TAP / TUN / Admin. Admin's children (Groups, Users, OTP) carry `perm: isAdmin` so they're invisible to non-admin users in the interactive menu AND rejected at the CLI for non-admin callers.
+
+Each area follows a consistent file layout:
+- `src/commands/<area>.ts` — the parent menu node (imports its children, sets `text`/`cliName`)
+- `src/commands/<area>/<child>.ts` — one Cmd per leaf
+
+Areas:
+- `gateway/{add,ls,rm,test}`
+- `services/{ls,register,use,hold,ping,install,install-ssh}`
+- `ca/{pubkey,sign,krl}`
+- `cert/{refresh,ls,revoke,unrevoke}`
+- `tap/{join,leave,ls}`
+- `tun/{join,leave,ls}`
+- `admin/{group,user,otp}` — group and user are themselves menu parents (`group/{create,ls,members,add,rm}` etc. live inline in `admin/group.ts`)
 
 ### CA (`src/ca.ts`)
 
@@ -68,13 +82,18 @@ Thin wrappers over `id`, `getent`, `groupadd`, `groupdel`, `usermod`, `gpasswd`,
 ### Operations on the wire
 
 - `create-group-netns` / `delete-group-netns` (root) — create a bridge `mad-<group>` and remember its subnet.
-- `tun-allocate-ip` — assigns the next host IP from the group's subnet to the gateway side of an existing `ssh -w` tun device, brings it up. Stores a `TunRecord` for cleanup.
-- `tun-release` — `ip link delete` the tun device + drop the state record.
+- `tap-allocate` — for a client's `mad tap/tun join`: pick a free `tap-<g>-<n>` or `tun-<g>-<n>` ifname, create it with `ip tuntap add … user <uid>` so the calling Linux user owns it, attach to the bridge (L2) or assign /32 + peer (L3), bring up, set txqueuelen + qdisc. Returns a `TunRecord`. The client's `mad tap/tun-attach` then opens that device directly (no CAP_NET_ADMIN needed because of `user <uid>`) and shuttles length-prefixed Ethernet/IP frames over the SSH exec channel.
+- `tun-release` — `ip link delete` the tap/tun device + drop the state record.
 - `list-tuns` — filtered to the caller's UID (root sees all).
 - `create-otp` (root) — ensures the Linux user exists and is in `mad,mad-users`, generates an 8-digit code, `chpasswd`'s it as the user's Linux password, persists a record with 15-minute TTL. The user authenticates to sshd via that password on their next `ssh user@gw enroll`.
-- `enroll-self` (peer-credentialled) — identifies the caller via `SO_PEERCRED`, signs the supplied pubkey, appends to `authorized_keys`, `passwd -l <user>` to invalidate the OTP. Used by `mad enroll` after sshd already authenticated the user.
+- `enroll-self` (peer-credentialled) — identifies the caller via `SO_PEERCRED`, signs the supplied pubkey, appends to `authorized_keys`, `passwd -l <user>` to invalidate the OTP. Used by `mad enroll` after sshd already authenticated the user. Note: enroll-self does NOT issue a cert — it just installs the pubkey.
 - `ca-sign` (root) — sign an arbitrary pubkey for an arbitrary username (admin tool).
 - `ca-pubkey` — print the CA pub for `TrustedUserCAKeys`.
+- `ca-krl` — fetch the daemon-signed KRL bytes (used by field devices for revocation propagation).
+- `refresh-cert` — re-sign the caller's pubkey with their current `mad-*` group memberships as principals.
+- `list-certs` / `revoke-cert` / `unrevoke-cert` / `list-revoked` — cert inventory + revocation. Records live in `state.json` under `certs[]` and `revoked[]`.
+
+The frame pump itself uses a 2-byte big-endian length prefix per Ethernet/IP frame, NOT `ssh -w`'s built-in tunnel mode (which would need PermitTunnel + CAP_NET_ADMIN inside sshd). This is what makes mad work in unprivileged containers / LXCs.
 
 ### Filesystem layout at runtime
 
@@ -96,8 +115,12 @@ The `2770` mode + setgid on `/run/mad/groups/<g>/` is what makes group-based iso
 
 ## Conventions worth knowing
 
-- **Linux-only.** Calls `ip`, `getent`, `useradd`, `userdel`, `usermod`, `groupadd`, `gpasswd`, `id`. The daemon shells out to `iproute2` rather than using netlink directly (the previous Rust netlink module was dropped).
-- **`bun:ffi` is used only for `SO_PEERCRED`.** The old `src/ffi/`, `src/utils/NetNS.ts`, `native/` Rust module, and `ffi-rs` dependency are gone; the daemon doesn't manage namespaces in-process.
+- **Linux-only gateway** (the daemon, the sshd glue, the `ip`/`groupadd`/`usermod`/`id` shellouts). Clients run on Linux/macOS/Windows.
+- **`bun:ffi` use sites**:
+  - `src/daemon/peercred.ts` — `getsockopt(SO_PEERCRED)` against libc on the gateway.
+  - `src/utils/tapPipe.ts` — opens `/dev/net/tun` via `TUNSETIFF` ioctl on Linux clients.
+  - `src/utils/winNative.ts` — loads the Windows-only Rust native module (`native/windows-tap/mad_wintap.dll`) for wintun / TAP-Windows6.
+- **Windows port** lives in `native/windows-tap/` (Rust `cdylib`). Cross-compiles from Linux via `mingw-w64`. Embedded into the compiled mad.exe via `bun build --compile`'s file-import attribute and extracted to `%LOCALAPPDATA%\mad\native\` on first run. See `docs/internal/tun-tap-walkthrough.md` for the full architecture.
 - **No tests today.** Verification is the end-to-end smoke test in the plan file (`~/.claude/plans/create-a-plan-for-stateless-popcorn.md`) — OTP enrollment, group dir mode check, concurrent `curl` over a forwarded socket, cross-group denial, TAP join/leave.
 - **`SO_PEERCRED` via `bun:ffi`.** `peercred.ts` opens libc and calls `getsockopt` directly. The fd is read from `socket._handle.fd`. Bun's compat for Node's net module preserves that property.
 - **Versioning is by Changesets** (`.changeset/`); `npm run release` invokes release-it for the tag. There is no client to build separately anymore.

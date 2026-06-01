@@ -21,7 +21,7 @@ If you don't care about the distinction, always do both: there's a single comman
 
 ## What's tracked
 
-Every call into `consume-otp`, `ca-sign`, or `refresh-cert` records a `CertRecord` in `/var/lib/mad/state.json`:
+Every call into `ca-sign` or `refresh-cert` records a `CertRecord` in `/var/lib/mad/state.json` (the `enroll-self` op does not — enroll just installs the pubkey into authorized_keys; it doesn't issue a cert):
 
 ```json
 {

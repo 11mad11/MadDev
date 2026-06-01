@@ -67,9 +67,11 @@ The `Where` column tells you which socket the daemon-side command goes through:
 
 | Command | Where | Notes |
 |---|---|---|
-| `mad tun join <gw>/<group>` | client (Linux/macOS, root) | Opens `ssh -w 0:0 <gw> mad tun-attach <group> tunN`, daemon assigns an IP in the group's subnet. Holds the session detached. |
-| `mad tun leave <gw>/<group>` | client | SIGTERM the held SSH; the tun device vanishes; state record cleared. |
+| `mad tun join <gw>/<group>` | client (Linux/macOS/Windows, root/admin) | Opens an SSH exec channel to `<gw>` running `mad tun-attach <group>`, then shuttles length-prefixed Ethernet/IP frames over the channel between the local TUN device and the gateway-allocated one. Holds the session in the foreground. |
+| `mad tun leave <gw>/<group>` | client | SIGTERM the held SSH; the local tun device vanishes; gateway side cleans up via the ppid poll; state record cleared. |
 | `mad tun ls` | client | Lists active tun sessions on this machine from `~/.config/mad/tun-state.json`. |
+| `mad tap {join,leave,ls}` | client (Linux/macOS/Windows) | Same as `tun` but L2 (Ethernet frames, bridged into `mad-<group>`). Windows requires the TAP-Windows6 driver — install with `mad doctor --install-l2-driver`. |
+| `mad doctor [--install-l2-driver]` | client (Windows) | Reports wintun + TAP-Windows6 status; optionally downloads + UAC-elevates the OpenVPN tap-windows installer. |
 | `mad gateway add <user@host> [--alias <a>]` | client | Appends a Host block to `~/.ssh/config` with `SetEnv MAD_GATEWAY=1`. |
 | `mad gateway ls / rm <alias> / test <alias>` | client | List / remove / round-trip-ping gateways. |
 

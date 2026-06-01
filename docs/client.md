@@ -83,7 +83,8 @@ mad service register gw2/finance/api localhost:8000
 | `service ls / use / register` | ✓ | ✓ | ✓ |
 | `gateway add / ls / rm / test` | ✓ | ✓ | ✓ |
 | `cert refresh`, `ca pubkey`, `enroll` | ✓ | ✓ | ✓ |
-| `tun join / leave / ls` (L2 VPN to a group) | ✓ | ✓ | ✗ (no `ssh -w`) |
+| `tun join / leave / ls` (L3) | ✓ | ✓ | ✓ (wintun via native/windows-tap) |
+| `tap join / leave / ls` (L2) | ✓ | ✗ (no kernel TAP on darwin) | ✓ (TAP-Windows6 — install via `mad doctor`) |
 | `daemon`, `setup`, `update` (server-side) | ✓ (root) | ✗ | ✗ |
 | `group / user / cert revoke / otp` (admin, talk to daemon) | over SSH to a gateway | over SSH | over SSH |
 

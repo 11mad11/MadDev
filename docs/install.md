@@ -25,11 +25,11 @@ What `mad setup` does:
 | Step | Where | Detail |
 |---|---|---|
 | Create groups | `/etc/group` | `mad`, `mad-users`, `mad-admin` |
-| Make dirs | `/etc/mad/{ca,groups}`, `/var/lib/mad`, `/run/mad/groups` | proper modes and ownership |
+| Make dirs | `/etc/mad/ca`, `/var/lib/mad`, `/run/mad/groups` | proper modes and ownership |
 | Materialize CA | `/etc/mad/ca/ca.key` (0400 root) | ed25519, generated on first run |
 | Publish CA pubkey | `/etc/ssh/mad_ca.pub` | what `TrustedUserCAKeys` reads |
 | Install wrapper | `/usr/bin/mad` | a shell script `exec bun run /opt/mad/src/cli.ts "$@"` |
-| Install sshd snippet | `/etc/ssh/sshd_config.d/99-mad.conf` | `Match Group mad-users`, `Match User otp` |
+| Install sshd snippet | `/etc/ssh/sshd_config.d/99-mad.conf` | one `Match Group mad-users` block (ForceCommand, PasswordAuth for the OTP flow, StreamLocalBind knobs) |
 | Install systemd unit | `/etc/systemd/system/mad-daemon.service` | for the privileged daemon |
 | Reload sshd | only if the snippet changed | `systemctl reload-or-restart ssh` |
 | Enable+start daemon | only if unit changed or not running | `systemctl enable --now mad-daemon` |
