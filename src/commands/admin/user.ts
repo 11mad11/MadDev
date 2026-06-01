@@ -14,7 +14,7 @@ export function forgetUserKeysAll(username: string) {
 
 export const userDelete = cmdDef({
     perm: isAdmin,
-    cmd: () => createCommand("user-del").summary("Delete a Linux user").argument("<name>"),
+    cmd: () => createCommand("del").summary("Delete a Linux user").argument("<name>"),
     async pty(ctx) {
         const name = await ctx.inquirer.input({
             message: "Username to delete",
@@ -32,7 +32,7 @@ export const userDelete = cmdDef({
 
 export const userForgetKeys = cmdDef({
     perm: isAdmin,
-    cmd: () => createCommand("user-forget-keys").summary("Wipe a user's authorized_keys").argument("<name>"),
+    cmd: () => createCommand("forget-keys").summary("Wipe a user's authorized_keys").argument("<name>"),
     async pty(ctx) {
         const name = await ctx.inquirer.input({
             message: "Username",

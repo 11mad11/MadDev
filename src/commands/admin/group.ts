@@ -46,7 +46,7 @@ export async function createGroupAll(name: string, subnet?: string) {
 
 export const groupCreate = cmdDef({
     perm: isAdmin,
-    cmd: () => createCommand("group-create").summary("Create a group").argument("<name>").argument("[subnet]"),
+    cmd: () => createCommand("create").summary("Create a group").argument("<name>").argument("[subnet]"),
     async pty(ctx) {
         const name = await ctx.inquirer.input({ message: "Group name" });
         const subnet = await ctx.inquirer.input({ message: "TUN/TAP subnet (optional, e.g. 10.42.0.0/24)", default: "" });
@@ -60,7 +60,7 @@ export const groupCreate = cmdDef({
 
 export const groupList = cmdDef({
     perm: isAdmin,
-    cmd: () => createCommand("group-ls").summary("List mad groups"),
+    cmd: () => createCommand("ls").summary("List mad groups"),
     async pty() { return [[] as const, {}]; },
     async run(ctx) {
         const { readdirSync, statSync } = await import("fs");
@@ -77,7 +77,7 @@ export const groupList = cmdDef({
 
 export const groupMembers = cmdDef({
     perm: isAdmin,
-    cmd: () => createCommand("group-members").summary("Show group members").argument("<name>"),
+    cmd: () => createCommand("members").summary("Show group members").argument("<name>"),
     async pty(ctx) {
         const name = await ctx.inquirer.input({ message: "Group name" });
         return [[name] as const, {}];
@@ -91,7 +91,7 @@ export const groupMembers = cmdDef({
 
 export const groupAddUser = cmdDef({
     perm: isAdmin,
-    cmd: () => createCommand("group-add").summary("Add a user to a group").argument("<group>").argument("<user>"),
+    cmd: () => createCommand("add").summary("Add a user to a group").argument("<group>").argument("<user>"),
     async pty(ctx) {
         const group = await ctx.inquirer.input({ message: "Group name" });
         const user = await ctx.inquirer.input({ message: "Username to add" });
@@ -105,7 +105,7 @@ export const groupAddUser = cmdDef({
 
 export const groupRemoveUser = cmdDef({
     perm: isAdmin,
-    cmd: () => createCommand("group-rm").summary("Remove a user from a group").argument("<group>").argument("<user>"),
+    cmd: () => createCommand("rm").summary("Remove a user from a group").argument("<group>").argument("<user>"),
     async pty(ctx) {
         const group = await ctx.inquirer.input({ message: "Group name" });
         const user = await ctx.inquirer.input({ message: "Username to remove" });

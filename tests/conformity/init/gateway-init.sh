@@ -51,8 +51,8 @@ log "daemon pid=$DAEMON_PID"
 # ---- group subnets ---------------------------------------------------
 # Idempotent — re-running the container reuses existing nets.
 log "creating group bridges"
-mad group create ga --subnet 10.77.10.0/24 2>&1 | sed 's/^/  /'  || true
-mad group create gb --subnet 10.77.20.0/24 2>&1 | sed 's/^/  /'  || true
+mad group create ga 10.77.10.0/24 2>&1 | sed 's/^/  /'  || true
+mad group create gb 10.77.20.0/24 2>&1 | sed 's/^/  /'  || true
 
 # ---- sshd (foreground = container PID 1) ----------------------------
 log "starting sshd"
