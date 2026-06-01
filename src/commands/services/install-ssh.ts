@@ -20,6 +20,17 @@ export default cmdDef({
         return [[groupDevice.trim()] as const, {}] as any;
     },
     async run(ctx, opts, groupDevice) {
+        // In the interactive menu, the install script is a multi-page
+        // bash blob that's awkward to scrape out of the SSH session.
+        // Print a one-liner the user can paste into their local shell
+        // instead, redirecting the output to a file for review.
+        if (ctx.mode === "shell") {
+            const fname = `install-ssh-${groupDevice.replace("/", "-")}.sh`;
+            ctx.output.write(`\nRun this from your local shell to save the install script:\n\n`);
+            ctx.output.write(`  ssh mad service install-ssh ${groupDevice} > ${fname}\n\n`);
+            ctx.output.write(`Review it, then run: sh ${fname}\n`);
+            return;
+        }
         const { sshShareScript } = await import("../install");
         const [group, deviceName] = groupDevice.split("/");
         if (!group || !deviceName) throw new Error("expected <group>/<device>");

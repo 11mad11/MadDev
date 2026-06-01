@@ -23,6 +23,17 @@ export default cmdDef({
         return [[groupname.trim(), target.trim()] as const, {}] as any;
     },
     async run(ctx, opts, groupname, target) {
+        // From the interactive menu, hand the user a one-liner they can
+        // paste into their LOCAL shell and pipe to a file — much nicer
+        // than copy/pasting the multi-line install script out of an
+        // ssh session.
+        if (ctx.mode === "shell") {
+            const fname = `install-${groupname.replace("/", "-")}.sh`;
+            ctx.output.write(`\nRun this from your local shell to save the install script:\n\n`);
+            ctx.output.write(`  ssh mad service install ${groupname} ${target} > ${fname}\n\n`);
+            ctx.output.write(`Review it, then run: sh ${fname}\n`);
+            return;
+        }
         const { forwardingScript } = await import("../install");
         const [g, n] = groupname.split("/");
         if (!g || !n) throw new Error("expected <group>/<name>");
