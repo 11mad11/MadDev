@@ -1,6 +1,6 @@
 import { createConnection } from "net";
 import { createInterface } from "readline";
-import { CertRecord, DAEMON_ROOT_SOCKET, DAEMON_SOCKET, Request, Response, RevocationRecord, TunRecord } from "./protocol";
+import { CertRecord, DAEMON_ROOT_SOCKET, DAEMON_SOCKET, Request, Response, RevocationRecord, TunRecord, UsageAggregate, UsageEvent, UsageFilter } from "./protocol";
 
 function call(req: Request, asRoot = false): Promise<any> {
     const path = asRoot ? DAEMON_ROOT_SOCKET : DAEMON_SOCKET;
@@ -76,5 +76,11 @@ export const daemon = {
     },
     unrevokeCert(serial: number): Promise<{ serial: number }> {
         return call({ op: "unrevoke-cert", serial }, true);
+    },
+    usageRecord(events: UsageEvent[]): Promise<{ recorded: number }> {
+        return call({ op: "usage-record", events });
+    },
+    usageQuery(filter?: UsageFilter): Promise<UsageAggregate[]> {
+        return call({ op: "usage-query", filter });
     },
 };

@@ -100,10 +100,62 @@ async function main() {
             const { openTap, pump } = await import("./utils/tapPipe");
             const fd = openTap(r.ifname, r.mode);
 
+            // Usage metering: count bytes/packets in each direction, flush
+            // deltas to the daemon every 60s and once more in cleanup() so
+            // an abrupt SSH drop only loses the last sub-60s slice.
+            const totals = { rxBytes: 0, txBytes: 0, rxPackets: 0, txPackets: 0 };
+            const counters = {
+                addTx(bytes: number) { totals.txBytes += bytes; totals.txPackets += 1; },
+                addRx(bytes: number) { totals.rxBytes += bytes; totals.rxPackets += 1; },
+            };
+            const sessionStart = Date.now();
+            let lastFlush = sessionStart;
+            const flushed = { rxBytes: 0, txBytes: 0, rxPackets: 0, txPackets: 0 };
+            // Serialize flushes: an in-flight 60s tick must finish before
+            // cleanup's final flush starts, otherwise overlapping windows
+            // would double-bill the bytes counted while the tick was awaiting.
+            let pending: Promise<void> = Promise.resolve();
+            const flush = (): Promise<void> => {
+                pending = pending.then(async () => {
+                    const windowStart = lastFlush;
+                    const windowEnd = Date.now();
+                    const drx = totals.rxBytes - flushed.rxBytes;
+                    const dtx = totals.txBytes - flushed.txBytes;
+                    const drxp = totals.rxPackets - flushed.rxPackets;
+                    const dtxp = totals.txPackets - flushed.txPackets;
+                    if (drx === 0 && dtx === 0) { lastFlush = windowEnd; return; }
+                    try {
+                        await daemon.usageRecord([{
+                            kind: r.mode === "l2" ? "tap" : "tun",
+                            uid: r.uid,
+                            username: r.username,
+                            group: r.group,
+                            ifname: r.ifname,
+                            mode: r.mode,
+                            windowStart, windowEnd,
+                            rxBytes: drx, txBytes: dtx,
+                            rxPackets: drxp, txPackets: dtxp,
+                        }]);
+                        flushed.rxBytes += drx;
+                        flushed.txBytes += dtx;
+                        flushed.rxPackets += drxp;
+                        flushed.txPackets += dtxp;
+                        lastFlush = windowEnd;
+                    } catch (e: any) {
+                        // Best-effort; next tick retries with the still-larger delta.
+                        process.stderr.write(`mad tun-attach usage flush: ${e?.message ?? e}\n`);
+                    }
+                });
+                return pending;
+            };
+            const flushTick = setInterval(() => { flush(); }, 60 * 1000);
+
             let cleaning = false;
             const cleanup = async () => {
                 if (cleaning) return;
                 cleaning = true;
+                clearInterval(flushTick);
+                await flush();
                 try { await daemon.tunRelease(r.ifname); } catch {}
                 process.exit(0);
             };
@@ -116,7 +168,7 @@ async function main() {
             }, 1000);
 
             try {
-                await pump({ fd, remoteIn: process.stdin, remoteOut: process.stdout });
+                await pump({ fd, remoteIn: process.stdin, remoteOut: process.stdout, counters });
             } catch (e: any) {
                 process.stderr.write(`mad tun-attach pump: ${e.message}\n`);
             }

@@ -67,10 +67,23 @@ export function openTap(ifname: string, mode: "l2" | "l3" = "l2"): number {
  * the 2-byte prefix and the body into one write keeps Node's queue
  * from inflating with tiny prefix buffers.
  */
-function pumpTunToRemote(fd: number, remoteOut: Writable): Promise<void> {
+/**
+ * Optional byte/packet counters wired through `pump()`. Tx counts the
+ * gateway→client direction (frames read from the tap fd and sent over
+ * SSH); Rx counts client→gateway (frames received and written to fd).
+ * Producers (`mad tun-attach`) read these on a 60s tick and flush
+ * deltas to the daemon's usage store.
+ */
+export interface PumpCounters {
+    addTx(bytes: number): void;
+    addRx(bytes: number): void;
+}
+
+function pumpTunToRemote(fd: number, remoteOut: Writable, counters?: PumpCounters): Promise<void> {
     return new Promise((resolve, reject) => {
         const stream = createReadStream("" as any, { fd, autoClose: false, highWaterMark: 2048 });
         stream.on("data", (chunk: Buffer) => {
+            counters?.addTx(chunk.length);
             const out = Buffer.allocUnsafe(2 + chunk.length);
             out.writeUInt16BE(chunk.length, 0);
             chunk.copy(out, 2);
@@ -88,7 +101,7 @@ function pumpTunToRemote(fd: number, remoteOut: Writable): Promise<void> {
  * Read length-prefixed frames from remoteIn and write each to the TUN
  * fd as one syscall. Buffers across chunk boundaries.
  */
-function pumpRemoteToTun(fd: number, remoteIn: Readable): Promise<void> {
+function pumpRemoteToTun(fd: number, remoteIn: Readable, counters?: PumpCounters): Promise<void> {
     return new Promise((resolve, reject) => {
         let buf = Buffer.alloc(0);
         remoteIn.on("data", (chunk: Buffer) => {
@@ -99,6 +112,7 @@ function pumpRemoteToTun(fd: number, remoteIn: Readable): Promise<void> {
                     if (buf.length < 2 + len) break;
                     const frame = buf.subarray(2, 2 + len);
                     writeSync(fd, frame);
+                    counters?.addRx(len);
                     buf = buf.subarray(2 + len);
                 }
             } catch (e) { reject(e); }
@@ -108,9 +122,9 @@ function pumpRemoteToTun(fd: number, remoteIn: Readable): Promise<void> {
     });
 }
 
-export async function pump(opts: { fd: number; remoteIn: Readable; remoteOut: Writable }): Promise<void> {
+export async function pump(opts: { fd: number; remoteIn: Readable; remoteOut: Writable; counters?: PumpCounters }): Promise<void> {
     await Promise.race([
-        pumpTunToRemote(opts.fd, opts.remoteOut),
-        pumpRemoteToTun(opts.fd, opts.remoteIn),
+        pumpTunToRemote(opts.fd, opts.remoteOut, opts.counters),
+        pumpRemoteToTun(opts.fd, opts.remoteIn, opts.counters),
     ]);
 }

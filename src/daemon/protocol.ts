@@ -22,7 +22,9 @@ export type Request =
     | { op: "list-certs"; username?: string }
     | { op: "list-revoked" }
     | { op: "revoke-cert"; serial?: number; username?: string; reason?: string }
-    | { op: "unrevoke-cert"; serial: number };
+    | { op: "unrevoke-cert"; serial: number }
+    | { op: "usage-record"; events: UsageEvent[] }
+    | { op: "usage-query"; filter?: UsageFilter };
 
 export type Response =
     | { ok: true; data?: any }
@@ -77,4 +79,43 @@ export interface DaemonState {
     nextSerial: number;
     certs: CertRecord[];
     revoked: RevocationRecord[];
+}
+
+export type UsageKind = "tap" | "tun" | "svc-publish" | "svc-consume";
+
+export interface UsageEvent {
+    kind: UsageKind;
+    uid: number;
+    username: string;
+    group: string;
+    ifname?: string;
+    mode?: "l2" | "l3";
+    service?: string;
+    windowStart: number;
+    windowEnd: number;
+    rxBytes: number;
+    txBytes: number;
+    rxPackets: number;
+    txPackets: number;
+}
+
+export interface UsageFilter {
+    since?: number;
+    until?: number;
+    uid?: number;
+    group?: string;
+    kind?: UsageKind;
+}
+
+export interface UsageAggregate {
+    kind: UsageKind;
+    uid: number;
+    username: string;
+    group: string;
+    rxBytes: number;
+    txBytes: number;
+    rxPackets: number;
+    txPackets: number;
+    firstSeen: number;
+    lastSeen: number;
 }

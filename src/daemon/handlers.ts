@@ -3,8 +3,9 @@ import { randomBytes } from "crypto";
 import { writeFileSync, mkdirSync, chmodSync, existsSync, readFileSync, chownSync, appendFileSync, statSync } from "fs";
 import { CA } from "../ca";
 import { assertValidName, getGroupGid, getGroupMembers, getUserGid, getUserGroups, getUserHome, getUserPrimaryGroup, getUserUid, userExists } from "../groups";
-import { CertRecord, DaemonState, GroupNetns, OtpRecord, PeerCred, Request, Response, RevocationRecord, TunRecord } from "./protocol";
+import { CertRecord, DaemonState, GroupNetns, OtpRecord, PeerCred, Request, Response, RevocationRecord, TunRecord, UsageAggregate, UsageEvent, UsageFilter } from "./protocol";
 import { saveState } from "./state";
+import { queryUsage as queryUsageDb, recordEvents as recordUsageDb } from "./usage";
 
 const KRL_PATH = "/etc/ssh/mad_krl";
 const CERT_VALIDITY_WEEKS = parseEnvInt(process.env.MAD_CERT_VALIDITY_WEEKS, 520);
@@ -112,6 +113,8 @@ function dispatch(req: Request, ctx: HandlerCtx): any {
         case "list-revoked":       return ctx.state.revoked;
         case "revoke-cert":        return revokeCert(req, ctx);
         case "unrevoke-cert":      return unrevokeCert(req, ctx);
+        case "usage-record":       return recordUsage(req, ctx);
+        case "usage-query":        return queryUsage(req, ctx);
         default: throw new Error(`unknown op: ${(req as any).op}`);
     }
 }
@@ -488,6 +491,52 @@ export function syncGroupDirs(): { changed: number; skipped: number } {
         }
     }
     return { changed, skipped };
+}
+
+/**
+ * Accept a batch of usage windows from a producer (gateway-side
+ * `mad tun-attach` for tap/tun; the BPF collector for svc-* kinds, which
+ * runs in-process and connects as root). Non-root callers may only
+ * record events attributed to their own uid — prevents user-A from
+ * forging traffic against user-B's bill.
+ */
+function recordUsage(req: { events: UsageEvent[] }, ctx: HandlerCtx) {
+    if (!Array.isArray(req.events)) throw new Error("events must be an array");
+    if (req.events.length === 0) return { recorded: 0 };
+    if (ctx.peer.uid !== 0) {
+        for (const e of req.events) {
+            if (e.uid !== ctx.peer.uid)
+                throw new Error("cannot record usage for another uid");
+        }
+    }
+    for (const e of req.events) {
+        if (typeof e.kind !== "string") throw new Error("kind required");
+        if (typeof e.uid !== "number") throw new Error("uid required");
+        if (typeof e.username !== "string" || !e.username) throw new Error("username required");
+        if (typeof e.group !== "string" || !e.group) throw new Error("group required");
+        if (typeof e.windowStart !== "number" || typeof e.windowEnd !== "number")
+            throw new Error("window timestamps required");
+        if (e.windowEnd < e.windowStart) throw new Error("windowEnd < windowStart");
+        if (e.kind === "tap" || e.kind === "tun") {
+            if (typeof e.ifname !== "string" || !e.ifname) throw new Error("tap/tun ifname required");
+        }
+        if (e.kind === "svc-publish" || e.kind === "svc-consume") {
+            if (typeof e.service !== "string" || !e.service) throw new Error("svc-* service required");
+        }
+    }
+    recordUsageDb(req.events);
+    return { recorded: req.events.length };
+}
+
+/**
+ * Aggregated usage query. Non-root callers are pinned to their own uid
+ * regardless of what `filter.uid` they pass — same shape as `listTuns`
+ * and `listCerts`.
+ */
+function queryUsage(req: { filter?: UsageFilter }, ctx: HandlerCtx): UsageAggregate[] {
+    const filter: UsageFilter = { ...(req.filter ?? {}) };
+    if (ctx.peer.uid !== 0) filter.uid = ctx.peer.uid;
+    return queryUsageDb(filter);
 }
 
 export function pruneOtps(state: DaemonState) {
