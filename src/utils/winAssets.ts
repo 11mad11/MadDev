@@ -22,14 +22,20 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from "fs";
 import { join } from "path";
 
-// Static imports — bun build embeds the bytes into mad.exe.
-// In dev (bun run …), these resolve to absolute filesystem paths.
-import wintunSource from "../../native/windows-tap/vendor/wintun.dll" with { type: "file" };
-import madWintapSource from "../../native/windows-tap/target/x86_64-pc-windows-gnu/release/mad_wintap.dll" with { type: "file" };
-
 if (process.platform !== "win32") {
     throw new Error("winAssets.ts imported on non-Windows platform");
 }
+
+// Dynamic import via a string variable so Bun's static bundler doesn't
+// pull `winAssetsEmbed.ts` (with its bun-with-file DLL imports) into a
+// Linux `bun build --compile` — those DLLs only exist on the Windows
+// toolchain. winAssets() is only called from win32 code paths so the
+// runtime require always succeeds when we actually reach it.
+const embedModule = "./winAssetsEmbed";
+const { wintunSource, madWintapSource } = await import(embedModule) as {
+    wintunSource: string;
+    madWintapSource: string;
+};
 
 function localAppDataNativeDir(): string {
     const root = process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? "C:\\Users\\Default", "AppData", "Local");
