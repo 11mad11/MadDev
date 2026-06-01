@@ -630,13 +630,17 @@ echo
 echo "Test 21: mad service install <group/name> <target> — script is bash-valid"
 docker exec madtest-gateway bash -c 'mad service install ga/probe 127.0.0.1:8080 > /tmp/install21.sh'
 if docker exec madtest-gateway bash -n /tmp/install21.sh 2>/dev/null; then
+    # The script uses literal shell variables ($GROUP/$SVC_NAME), so we
+    # assert their assignments rather than the expanded socket path.
     has_shebang=$(docker exec madtest-gateway head -1 /tmp/install21.sh | grep -c "bash")
     has_unit=$(docker exec madtest-gateway grep -c "mad-fwd-ga-probe.service" /tmp/install21.sh || true)
-    has_sock=$(docker exec madtest-gateway grep -c "/run/mad/groups/ga/probe.sock" /tmp/install21.sh || true)
-    if [ "$has_shebang" -ge 1 ] && [ "$has_unit" -ge 1 ] && [ "$has_sock" -ge 1 ]; then
-        report pass "install script: bash shebang + unit + socket path all present"
+    has_group=$(docker exec madtest-gateway grep -cE '^GROUP="ga"' /tmp/install21.sh || true)
+    has_svc=$(docker exec madtest-gateway grep -cE '^SVC_NAME="probe"' /tmp/install21.sh || true)
+    has_target=$(docker exec madtest-gateway grep -cE '^TARGET="127\.0\.0\.1:8080"' /tmp/install21.sh || true)
+    if [ "$has_shebang" -ge 1 ] && [ "$has_unit" -ge 1 ] && [ "$has_group" -ge 1 ] && [ "$has_svc" -ge 1 ] && [ "$has_target" -ge 1 ]; then
+        report pass "install script: bash shebang + unit + GROUP/SVC_NAME/TARGET assignments all present"
     else
-        report fail "install script content" "shebang=$has_shebang unit=$has_unit sock=$has_sock"
+        report fail "install script content" "shebang=$has_shebang unit=$has_unit group=$has_group svc=$has_svc target=$has_target"
     fi
 else
     report fail "install script bash syntax" "bash -n found errors"
