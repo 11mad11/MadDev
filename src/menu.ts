@@ -85,7 +85,15 @@ export async function menuToTree(ctx: Ctx, menu: MenuNodeParent, prog?: Command)
 
     async function leaf(menuNode: Cmd<any, any>, parent: TreeNodeParent<TNT>, commanderParent: Command | undefined) {
         const cmd = menuNode.cmd();
-        if (commanderParent) {
+        // If the same name is already registered on `commanderParent`
+        // (e.g. cli.ts defined `mad help` directly, or two menu nodes
+        // happen to share a topic name), leave the existing one alone
+        // and just keep the interactive-menu entry. This avoids
+        // throwing when menu trees overlap CLI-side names — happens
+        // for help-topic Cmds named "ca"/"groups"/etc. that collide
+        // with top-level command areas.
+        const alreadyRegistered = !!commanderParent?.commands.find(c => c.name() === cmd.name());
+        if (commanderParent && !alreadyRegistered) {
             cmd.copyInheritedSettings(commanderParent);
             commanderParent.addCommand(cmd);
             cmd.action(async (...args) => {
@@ -126,9 +134,12 @@ export async function menuToTree(ctx: Ctx, menu: MenuNodeParent, prog?: Command)
         // If this menu group has a cliName, it owns a Commander
         // subcommand that nests its children. The interactive menu
         // doesn't care about cliName; it nests by text.
+        // If a same-named subcommand already exists (cli.ts defined
+        // it directly), reuse that one instead of throwing.
         let childCommander: Command | undefined = commanderParent;
         if (commanderParent && nodeMenu.cliName) {
-            childCommander = commanderParent.command(nodeMenu.cliName).description(nodeMenu.text);
+            const existing = commanderParent.commands.find(c => c.name() === nodeMenu.cliName);
+            childCommander = existing ?? commanderParent.command(nodeMenu.cliName).description(nodeMenu.text);
         }
 
         for (const child of nodeMenu.children) {
