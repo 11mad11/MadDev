@@ -1,0 +1,4 @@
+# Per-deployment SSH keys — generate fresh on each setup:
+#   cd keys && for u in alice bob carol dave; do ssh-keygen -t ed25519 -N "" -f $u -C "$u@mad-test"; done
+keys/*
+!keys/.gitkeep

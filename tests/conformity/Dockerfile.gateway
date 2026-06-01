@@ -1,0 +1,35 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        openssh-server sudo iproute2 iputils-ping tcpdump iperf3 \
+        curl unzip ca-certificates jq procps net-tools bridge-utils \
+        passwd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bun for the mad runtime. Copy to /usr/local/bin/ (mode 755) so the
+# unprivileged users that sshd forks via ForceCommand can execute it —
+# /root is 0700 by default so a symlink there wouldn't work.
+RUN curl -fsSL https://bun.sh/install | bash \
+    && install -m 0755 /root/.bun/bin/bun /usr/local/bin/bun
+
+# /usr/bin/mad wrapper — same shape as `mad setup` produces in prod.
+RUN printf '#!/bin/bash\nexec /usr/local/bin/bun /mad/src/cli.ts "$@"\n' > /usr/bin/mad && chmod 755 /usr/bin/mad
+
+# sshd: load mad's own Match-Group snippet but DROP the OTP/password-auth
+# bit (this bench uses pubkey auth pre-loaded into each user's
+# authorized_keys, no enrollment flow).
+RUN mkdir -p /run/sshd /var/run/sshd \
+    && ssh-keygen -A
+RUN cat > /etc/ssh/sshd_config.d/99-mad.conf <<'EOF'
+Match Group mad-users
+    ForceCommand /usr/bin/mad
+    AllowStreamLocalForwarding all
+    StreamLocalBindMask 0117
+    StreamLocalBindUnlink yes
+EOF
+
+COPY init/gateway-init.sh /init.sh
+RUN chmod +x /init.sh
+
+EXPOSE 22
+ENTRYPOINT ["/init.sh"]
