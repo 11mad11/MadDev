@@ -15,10 +15,14 @@ import { sshConfigBlock, gatewayHost } from "./utils/sshConfig";
 function buildCtx(mode: "shell" | "exec"): Ctx {
     const input = process.stdin;
     const output = process.stdout;
+    const uid = currentUid();
+    const groups = getCurrentUserGroups();
+    // root bypasses the mad-admin gate — it can do everything anyway.
+    if (uid === 0 && !groups.includes("mad-admin")) groups.push("mad-admin");
     return {
         username: currentUsername(),
-        uid: currentUid(),
-        groups: getCurrentUserGroups(),
+        uid,
+        groups,
         input,
         output,
         inquirer: fixedInquirer({ input, output }),
