@@ -13,11 +13,14 @@ interface DoctorOpts {
     installL2Driver?: boolean;
 }
 
-const TAP_WINDOWS_URL = "https://build.openvpn.net/downloads/releases/tap-windows-9.27.10.exe";
+// Latest available on build.openvpn.net as of 2026-06-04. The previous
+// 9.27.10 build never existed in their CDN (404). Updated to 9.24.7
+// I601-Win10 which is the newest installer they actually publish.
+const TAP_WINDOWS_URL = "https://build.openvpn.net/downloads/releases/tap-windows-9.24.7-I601-Win10.exe";
 
 async function downloadInstaller(destDir: string): Promise<string> {
     mkdirSync(destDir, { recursive: true });
-    const dest = join(destDir, "tap-windows-9.27.10.exe");
+    const dest = join(destDir, "tap-windows-9.24.7-I601-Win10.exe");
 
     if (existsSync(dest) && statSync(dest).size > 100_000) {
         process.stdout.write(`installer already cached at ${dest}\n`);

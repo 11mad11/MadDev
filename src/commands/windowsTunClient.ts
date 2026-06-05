@@ -146,7 +146,7 @@ export async function windowsTunJoin(gwGroup: string, requestedMode?: TunMode): 
                 "L2 (TAP) on Windows requires the TAP-Windows6 driver to be installed.\n" +
                 "  Run `sudo mad doctor --install-l2-driver` to install it (UAC prompt),\n" +
                 "  or install it manually from\n" +
-                "    https://build.openvpn.net/downloads/releases/tap-windows-9.27.10.exe\n",
+                "    https://build.openvpn.net/downloads/releases/tap-windows-9.24.7-I601-Win10.exe\n",
             );
             process.exit(2);
         }

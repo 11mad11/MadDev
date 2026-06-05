@@ -1,5 +1,11 @@
 # mad
 
+## 1.0.0-beta.2
+
+### Patch Changes
+
+- Fix `mad system doctor --install-l2-driver` failing with "HTTP 404 Not Found" — the hard-coded `tap-windows-9.27.10.exe` URL never existed on OpenVPN's CDN. Updated to the actual latest published build, `tap-windows-9.24.7-I601-Win10.exe`. Verified end-to-end on the Windows test PC: installer downloads, runs (signed, no interactive UAC), TAP-Windows Adapter V9 appears in Device Manager, and `mad system doctor` now reports `✓ TAP-Windows6 driver installed`.
+
 ## 1.0.0-beta.1
 
 ### Patch Changes
