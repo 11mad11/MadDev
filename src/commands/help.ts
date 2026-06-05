@@ -55,12 +55,13 @@ const helpIndex: Cmd = cmdDef({
 
 // Friendly menu titles per topic file (falls back to the bare filename).
 const TOPIC_TITLES: Record<string, string> = {
+    client: "Using mad as a client",
     install: "Installing the gateway",
     enrollment: "Enrolling a user",
     groups: "Managing groups and users",
     forwarding: "TCP service forwarding",
     "field-devices": "Sharing field devices",
-    vpn: "L2 VPN per group",
+    tun: "L2/L3 VPN per group",
     ca: "The mad CA",
     revocation: "Revocation",
     "cli-reference": "CLI reference",

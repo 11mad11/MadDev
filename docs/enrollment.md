@@ -1,91 +1,74 @@
-# Enrolling a user (OTP-as-password flow)
+# Enrolling a user
 
-Who: a `mad-admin` (or root) on the gateway, plus the new user with `ssh` on their machine.
-What: hand the new user an OTP, they trade it for their pubkey landing in `authorized_keys` on the gateway. (A signed cert is a separate, on-demand operation — see `mad cert refresh`.)
+For a `mad-admin` minting an OTP, and a new user redeeming it.
 
-## How the flow works
-
-Mad uses the user's own Linux account as the on-ramp. The OTP is stored as their Linux password for 15 minutes; sshd accepts it via standard PAM password auth — no `/etc/pam.d/sshd` tweak required. After the user enrolls, mad locks the password (`passwd -l`) so the OTP can't be reused. There's no shared `otp` user, no `AuthenticationMethods none` workaround.
+The OTP is the user's Linux password for 15 minutes. sshd accepts it via standard PAM. After enrolling, mad locks the password (`passwd -l`) so the OTP can't be reused.
 
 ## Mint the OTP (admin)
 
-Interactive: **Admin → OTP** → enter the username.
+Interactive: **Admin → OTP**.
 
 Scripted:
 
 ```sh
-ssh <you>@<gw> otp <newuser>
-# prints e.g. 38182922
-# expires at: 2026-05-31T01:55:00.000Z
+ssh <you>@<gw> admin otp <newuser>
 ```
 
-This requires you to be in `mad-admin`. The daemon does three things in one shot:
-1. `useradd -m -G mad,mad-users <newuser>` (if the user doesn't already exist; otherwise just adds them to those groups).
-2. Generates an 8-digit OTP.
-3. `echo "<newuser>:<OTP>" | chpasswd` — the OTP is now the user's Linux password.
+Prints something like:
 
-## Redeem the OTP (new user)
+```
+OTP for alice: 38182922
+expires at: 2026-05-31T01:55:00.000Z
+```
+
+What the daemon does:
+
+- `useradd -m -G mad,mad-users <newuser>` (or just `usermod` if the user exists).
+- Generates an 8-digit OTP.
+- `chpasswd` sets the OTP as the user's Linux password.
+
+You must be in `mad-admin`.
+
+## Redeem the OTP (user)
+
+On your laptop, make sure you have a key:
 
 ```sh
-# Generate an SSH key if you don't have one:
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
+```
 
-# Run the enrollment from your client:
+Then enroll:
+
+```sh
 ssh <newuser>@<gw> enroll
-# → prompts for your public key
-# → you paste it (one line)
-# → mad prints the signed cert
 ```
 
-What happens during `ssh <newuser>@<gw> enroll`:
-1. sshd accepts the OTP as your Linux password (`Match Group mad-users` has `PasswordAuthentication yes`).
-2. `Match Group mad-users` → `ForceCommand /usr/bin/mad`. With `SSH_ORIGINAL_COMMAND="enroll"`, mad runs the `enroll` subcommand.
-3. Mad prompts for your pubkey. You paste it. Mad asks the daemon to:
-   - Append the pubkey to `/home/<newuser>/.ssh/authorized_keys`.
-   - `passwd -l <newuser>` — your OTP password is locked; future logins must use your key.
-4. Mad prints a ready-to-paste `Host mad { … }` block for your `~/.ssh/config`, plus the one-liner you'd run if you ever want a cert (e.g. to reach field devices through the gateway):
+You'll be asked to paste your public key. mad then:
+
+- Appends it to `/home/<newuser>/.ssh/authorized_keys` on the gateway.
+- Locks your Linux password so the OTP is one-shot.
+- Prints a ready-to-paste `Host mad` block for your `~/.ssh/config`.
+
+From now on:
+
+```sh
+ssh <newuser>@<gw>     # → the mad menu
+```
+
+## Cert vs authorized_keys
+
+Enrollment does **not** issue a cert. Gateway login uses `authorized_keys`, which is already in place.
+
+You only need a cert to SSH into field devices through the gateway. Mint one any time:
 
 ```sh
 ssh mad cert refresh < ~/.ssh/id_ed25519.pub > ~/.ssh/id_ed25519-cert.pub
 ```
 
-Enrollment does **not** auto-sign a cert. The cert is only needed to reach field devices — gateway login itself uses `authorized_keys`, which is already set. Users who need a cert can mint one any time with `mad cert refresh`.
-
-You can now SSH in as yourself:
-
-```sh
-ssh <newuser>@<gw>     # → mad menu
-```
-
-## What gets recorded
-
-| | |
-|---|---|
-| sshd authenticates the user via PAM | the OTP IS the user's Linux password during the 15-min window |
-| Daemon validates the pubkey shape | fingerprinted before any state change so a malformed key fails cleanly |
-| Daemon writes the pubkey to authorized_keys | so the user can SSH in by key from now on |
-| Daemon locks the OTP password | `passwd -l <u>` — single-use |
-| Daemon drops the OTP record from state.json | (or the 60-second prune timer does it on TTL expiry) |
-
-Enrollment does **not** issue a cert. The cert is a separate concern — only useful for authenticating to field devices through the gateway. Whenever a user needs one:
-
-```sh
-ssh mad cert refresh < ~/.ssh/id_ed25519.pub > ~/.ssh/id_ed25519-cert.pub
-```
-
-This signs the same pubkey with the user's current group memberships as principals. Default validity is 10 years (`MAD_CERT_VALIDITY_WEEKS=520`).
-
-## Refreshing your cert (existing user)
-
-```sh
-ssh mad cert refresh < ~/.ssh/id_ed25519.pub > ~/.ssh/id_ed25519-cert.pub
-```
-
-This re-signs your same pubkey with your current group memberships. No new keypair, just a fresh cert.
+The daemon signs your key with your current group memberships as principals. Default validity: 10 years (`MAD_CERT_VALIDITY_WEEKS=520`).
 
 ## When things go wrong
 
-- **`ssh <newuser>@<gw> enroll` says "Permission denied (publickey)".** sshd refused password auth. Either the OTP expired (15 min) and the daemon locked the account already, or `PasswordAuthentication yes` isn't in effect for the `mad-users` Match block. Re-run `mad otp <newuser>` to mint a fresh one; check `sshd -T -C user=<newuser>` shows `passwordauthentication yes`.
-- **`Failed to parse … as a valid auto format key`.** The pubkey you pasted is malformed. It should be a single line: `ssh-ed25519 AAAAC3… [comment]`.
-- **You're enrolled but `ssh <you>@<gw>` immediately exits.** Your cert may have stale principals. Try `mad cert refresh` (you can run it because your pubkey is in `authorized_keys` now).
-- **The OTP "expired"** even though you're within 15 minutes. The daemon prunes on a 60s timer — there's a small race window. If you missed it, re-mint.
+- **`Permission denied (publickey)` on enroll** — the OTP probably expired (15 min) and the daemon locked the account. Re-mint with `mad admin otp <user>`.
+- **`Failed to parse … as a valid auto format key`** — your pubkey is malformed. It should be one line: `ssh-ed25519 AAAA… [comment]`.
+- **Login works but immediately exits** — your cert may have stale principals. Run `mad cert refresh`.

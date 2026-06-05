@@ -1,33 +1,35 @@
-# mad documentation
+# mad
 
-`mad` is a thin layer over system `sshd` and Linux groups that gives you:
+A thin layer over system `sshd` + Linux groups.
 
-- TCP service forwarding scoped to groups, enforced by filesystem ACLs.
-- Cross-host SSH into field devices via the gateway, with kernel-level auth via SSH certificates.
-- L2 VPN per group via TAP devices.
-- OTP-driven self-service onboarding for new users.
+What it gives you:
 
-Everything is one binary (`mad`) plus a small root daemon (`mad daemon`). System `sshd` handles all transport and auth.
+- TCP service forwarding, scoped to groups.
+- SSH into NAT'd field devices through the gateway.
+- L2/L3 VPN per group.
+- OTP-based onboarding for new users.
 
-## Audience guide
+Everything is one binary (`mad`) plus a small root daemon.
 
-| You are | Read |
-|---|---|
-| Using mad as a client (multi-gateway, ssh_config-driven) | [client.md](client.md) |
-| Setting up the gateway box for the first time | [install.md](install.md) |
-| Adding a new user (and they're enrolling) | [enrollment.md](enrollment.md) |
-| Managing groups (who's in what) | [groups.md](groups.md) |
-| A user wanting to expose a TCP service to your team | [forwarding.md](forwarding.md) |
-| Setting up a field device so techs can SSH into it | [field-devices.md](field-devices.md) |
-| A user wanting client-side L3 connectivity into a group's network | [tun.md](tun.md) |
-| Revoking a tech's access (or a lost laptop's certs) | [revocation.md](revocation.md) |
-| Needing the full subcommand reference | [cli-reference.md](cli-reference.md) |
-| Curious about the CA / cert details | [ca.md](ca.md) |
+## Pick a page
 
-## Core idea, in 30 seconds
+- **client**       — set up your laptop, manage gateways
+- **install**      — provision the gateway box (sysadmin)
+- **enrollment**   — onboard a new user
+- **groups**       — create groups, add/remove members
+- **forwarding**   — share a TCP service with your group
+- **field-devices** — share an SSH-able device with your group
+- **tun**          — L2/L3 VPN into a group's subnet
+- **revocation**   — revoke certs, lock people out
+- **ca**           — about the CA mad ships
+- **cli-reference** — every subcommand in one page
 
-- The **mad CA** signs SSH user certificates. `sshd` accepts them via `TrustedUserCAKeys`.
-- Each **Linux group** that mad knows about gets a directory at `/run/mad/groups/<group>/` owned `<owner-user>:<group>` with mode `2770` (setgid). Anyone in the group can put a Unix socket in there with `ssh -R …`. The setgid bit copies the group onto created sockets. Anyone *not* in the group can't even traverse the directory.
-- Every member's cert carries their **group memberships as cert principals**. Field devices' sshd uses an `AuthorizedPrincipalsFile` to accept those principals — no per-tech provisioning on each device.
+Open any of them with `mad help <name>`.
 
-That's it.
+## In 30 seconds
+
+- The **mad CA** signs SSH user certs. `sshd` trusts them via `TrustedUserCAKeys`.
+- Each Linux group gets `/run/mad/groups/<g>/` at mode `2770` (setgid). Members can drop sockets in there with `ssh -R`; non-members can't even traverse it.
+- A user's cert carries their group memberships as **principals**. Field devices accept any cert whose principals match an entry in their `AuthorizedPrincipalsFile` — no per-user provisioning per device.
+
+That's the whole model.

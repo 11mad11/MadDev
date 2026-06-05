@@ -1,72 +1,69 @@
 # mad as a client
 
-The same `mad` binary serves both as the gateway server (where `mad daemon` runs as root) and as a client tool on your laptop. This page covers the client side.
+The same `mad` binary serves both as the gateway (where `mad daemon` runs as root) and as a client tool on your laptop. This page covers the client side.
 
 ## Install
 
-Grab the prebuilt binary for your platform and put it on `$PATH`.
+Grab the prebuilt binary for your platform and put it on `$PATH`:
 
-| Platform | Binary |
-|---|---|
-| Linux x64 | `dist/mad-linux-x64` |
-| macOS x64 (Intel) | `dist/mad-darwin-x64` |
-| macOS arm64 (Apple Silicon) | `dist/mad-darwin-arm64` |
-| Windows x64 | `dist/mad-windows-x64.exe` |
+- **Linux x64** — `dist/mad-linux-x64`
+- **macOS x64** — `dist/mad-darwin-x64`
+- **macOS arm64** — `dist/mad-darwin-arm64`
+- **Windows x64** — `dist/mad-windows-x64.exe`
 
-Build them yourself from a Linux box that already has `bun`:
+Build them yourself on a Linux box with `bun`:
 
 ```sh
 bun run build:all
 ```
 
-Each binary is ~100 MB and self-contained (the bun runtime is embedded). No installer, no shared libs, no Node.
+Each binary is ~100 MB and self-contained. No installer, no shared libs, no Node.
 
-## How mad finds your gateways
+## How mad finds gateways
 
-mad reads `~/.ssh/config`. A gateway is just a normal `Host` block with one extra line:
+mad reads `~/.ssh/config`. A gateway is a normal `Host` block with one extra line:
 
 ```
 Host mad
-    HostName gw.example.com
-    User alice
-    IdentityFile ~/.ssh/id_ed25519
+    HostName            gw.example.com
+    User                alice
+    IdentityFile        ~/.ssh/id_ed25519
     ServerAliveInterval 30
-    SetEnv MAD_GATEWAY=1
+    SetEnv              MAD_GATEWAY=1
 ```
 
-`SetEnv MAD_GATEWAY=1` is the marker. Anything in `~/.ssh/config` without it is a regular SSH host and mad ignores it. mad uses `ssh -G <alias>` to read the effective config (which resolves `Include` directives and aliases natively), then filters for hosts whose effective `setenv` contains `mad_gateway=1`.
+`SetEnv MAD_GATEWAY=1` is the marker. Anything in `~/.ssh/config` without it is a regular SSH host and mad ignores it.
 
 You can keep using `ssh mad …` for raw access — the `SetEnv` line is invisible to OpenSSH.
 
-## `mad gateway` — manage gateways
+## Managing gateways
 
-| Command | What |
-|---|---|
-| `mad gateway add user@host [--alias <a>]` | Appends a Host block with `SetEnv MAD_GATEWAY=1`. Runs `ssh <alias> ca pubkey` once, which triggers SSH's standard `known_hosts` prompt for the host key (your TOFU pin). |
-| `mad gateway ls` | Lists every Host alias in your ssh_config that carries the marker. |
-| `mad gateway rm <alias>` | Removes the Host block. (Keep the alias if you still want raw `ssh <alias>` — pass `--keep-host` and only the `SetEnv` line is removed.) |
-| `mad gateway test <alias>` | Round-trip-ping. Prints latency + the gateway's CA pubkey for human inspection. |
+- `mad gateway add user@host [--alias <a>]` — appends the Host block. Runs `ssh <alias> ca pubkey` once to trigger SSH's standard `known_hosts` prompt (TOFU pin).
+- `mad gateway ls` — list every alias carrying the marker.
+- `mad gateway rm <alias>` — remove the Host block. Pass `--keep-host` to keep raw `ssh <alias>` working and only strip the `SetEnv` line.
+- `mad gateway test <alias>` — round-trip-ping. Prints latency and the gateway's CA pubkey.
 
-## `mad service ls` across gateways
+## Listing services across gateways
 
-By default `mad service ls` fans out across every gateway in your ssh_config in parallel (5-second per-gateway timeout) and prints rows prefixed with the gateway alias:
+By default, `mad service ls` fans out across every gateway in your ssh_config in parallel (5-second per-gateway timeout) and prefixes each row with the gateway alias:
 
 ```
-mad/marc/web       /run/mad/groups/marc/web.sock
-gw2/finance/db     /run/mad/groups/finance/db.sock
+mad/marc/web        /run/mad/groups/marc/web.sock
+gw2/finance/db      /run/mad/groups/finance/db.sock
 ```
 
 Flags:
-- `--gateway <alias>` — query just one
-- `--local-only` — skip the fanout, list local `/run/mad/groups/`
-- `--orphans` — include orphan socket files (no live listener; defaults to filtered)
-- `--json` — machine-parseable output
 
-If you have no gateways with the marker, `mad service ls` falls back to local behaviour — exactly what it did before this feature existed.
+- `--gateway <a>` — query just one.
+- `--local-only` — skip the fan-out; list local `/run/mad/groups/`.
+- `--orphans` — include orphan sockets (no live listener).
+- `--json` — machine-parseable.
 
-## `mad service use` / `mad service register`
+If you have no gateways with the marker, it falls back to local behaviour.
 
-Both accept a 3-segment path `<gateway>/<group>/<name>` (uses the named alias in the printed `ssh -L/-R`) or the older 2-segment `<group>/<name>` (uses the literal alias `mad`):
+## Using and registering services
+
+Both accept either a 3-segment path `<gateway>/<group>/<name>` (uses the named alias) or the older 2-segment `<group>/<name>` (uses the literal alias `mad`):
 
 ```sh
 mad service use mad/marc/web 9000
@@ -78,22 +75,17 @@ mad service register gw2/finance/api localhost:8000
 
 ## Platform matrix
 
-| Command | Linux | macOS | Windows |
-|---|---|---|---|
-| `service ls / use / register` | ✓ | ✓ | ✓ |
-| `gateway add / ls / rm / test` | ✓ | ✓ | ✓ |
-| `cert refresh`, `ca pubkey`, `enroll` | ✓ | ✓ | ✓ |
-| `tun join / leave / ls` (L3) | ✓ | ✓ | ✓ (wintun via native/windows-tap) |
-| `tap join / leave / ls` (L2) | ✓ | ✗ (no kernel TAP on darwin) | ✓ (TAP-Windows6 — install via `mad doctor`) |
-| `daemon`, `setup`, `update` (server-side) | ✓ (root) | ✗ | ✗ |
-| `group / user / cert revoke / otp` (admin, talk to daemon) | over SSH to a gateway | over SSH | over SSH |
+- **service ls / use / register** — Linux, macOS, Windows.
+- **gateway add / ls / rm / test** — Linux, macOS, Windows.
+- **cert refresh, ca pubkey, enroll** — Linux, macOS, Windows.
+- **tun join / leave / ls** (L3) — Linux, macOS, Windows (wintun).
+- **tap join / leave / ls** (L2) — Linux, Windows (TAP-Windows6 via `mad system doctor`). Not on macOS (no kernel TAP).
+- **daemon, system setup, system update** (server-side) — Linux + root only.
+- **admin / cert revoke / otp** — works from any client, over SSH to a gateway.
 
-Server-only commands print a clear error if run on the wrong platform or without root:
+Server-only commands fail loudly on the wrong platform:
+
 ```
 mad daemon requires root (try sudo mad daemon).
-mad setup requires Linux (you are on darwin).
+mad system setup requires Linux (you are on darwin).
 ```
-
-## Backward compatibility
-
-A user who never marks a Host block as a gateway keeps seeing `mad service ls` work exactly as before — local-only. The fanout layer is silent unless at least one ssh_config Host has `SetEnv MAD_GATEWAY=1`.

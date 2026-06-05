@@ -1,88 +1,79 @@
 # Managing groups and users
 
-Who: members of `mad-admin`.
-What: create groups, list members, add/remove people, delete users.
+For members of `mad-admin`.
 
 ## Concepts
 
-- A **group** in mad is just a **Linux group** with a matching `/run/mad/groups/<group>/` directory. The directory is `root:<group>` mode `2770` (setgid). There's no per-group "owner" — `mad-admin` membership is the central admin role; any member of `<group>` can register sockets there.
-- A user is a **member** if their Linux account is in that group (`/etc/group`). Membership controls:
-  - which sockets they can `ssh -R`/`-L` to,
-  - whether they can `mad tap join` the group's VPN,
-  - which principals their mad cert carries.
+- A **mad group** is a Linux group with a matching `/run/mad/groups/<g>/` directory (mode `2770`, setgid).
+- A user is a **member** if their Linux account is in that group.
+
+Membership controls:
+
+- Which sockets they can `ssh -R` / `ssh -L`.
+- Whether they can `mad tap join` the group's VPN.
+- Which principals their cert carries.
 
 ## Create a group
 
-Interactive: **Admin → Groups → group-create**, supply name, owner username (must exist), optional VPN subnet (`10.42.0.0/24`).
+Interactive: **Admin → Groups → create**.
 
 Scripted:
 
 ```sh
-ssh <you>@<gw> group create demo --subnet 10.42.0.0/24
+ssh <you>@<gw> admin group create demo 10.42.0.0/24
 ```
+
+The subnet is optional — only needed if anyone in the group wants `mad tap join`.
 
 What happens:
 
-| Step | What |
-|---|---|
-| `groupadd demo` | new Linux group |
-| `mkdir /run/mad/groups/demo` | runtime dir |
-| `chown alice:demo /run/mad/groups/demo` | ownership |
-| `chmod 2770 /run/mad/groups/demo` | setgid + group rwx |
-| `state.json` `netns[]` entry | persistent subnet metadata (only if `--subnet` given) |
-| daemon op `create-group-netns` | bridge `mad-demo`, gateway IP `10.42.0.1/24` (only if `--subnet` given) |
+- `groupadd demo`.
+- `mkdir /run/mad/groups/demo`, `chown root:demo`, `chmod 2770`.
+- If a subnet was given, the daemon records it and brings up bridge `mad-demo`.
 
-The subnet is only required if anyone in the group wants `mad tap join`.
-
-## Add and remove members
-
-Interactive: **Admin → Groups → group-add** / **group-rm**.
-
-Scripted:
+## Add or remove members
 
 ```sh
-ssh <you>@<gw> group add demo bob       # usermod -aG demo bob
-ssh <you>@<gw> group rm  demo bob       # gpasswd -d  bob demo
+ssh <you>@<gw> admin group add demo bob       # usermod -aG demo bob
+ssh <you>@<gw> admin group rm  demo bob       # gpasswd -d  bob demo
 ```
 
-When you add or remove someone, their **existing certificate keeps its old principals until it expires** (520 weeks / ~10 years by default, configurable via the `MAD_CERT_VALIDITY_WEEKS` env var on the `mad-daemon` systemd unit). For faster effect:
+Existing certs keep their old principals until they expire (default 10 years). To apply membership changes faster:
 
-- Lower `MAD_CERT_VALIDITY_WEEKS` on the daemon unit so newly-issued certs expire sooner, or
-- Ask them to run `ssh mad cert refresh` to pick up the new memberships immediately, or
-- Revoke the old cert with `sudo mad cert revoke --user <them>` (or `--serial <n>`) so the gateway and field devices reject it on the next connection.
+- Ask the user to run `mad cert refresh`, or
+- Revoke their old cert with `mad cert revoke --user <them>`, or
+- Lower `MAD_CERT_VALIDITY_WEEKS` on the daemon unit for shorter-lived certs going forward.
 
-## List groups / members
+## List groups and members
 
 ```sh
-ssh <you>@<gw> group ls
-ssh <you>@<gw> group members demo
+ssh <you>@<gw> admin group ls
+ssh <you>@<gw> admin group members demo
 ```
-
-The first walks `/run/mad/groups/*`. The second is `getent group demo` parsed for the member field.
 
 ## Delete a user
 
-Interactive: **Admin → Users → user-del** (confirms before running).
+Interactive: **Admin → Users → del** (with a confirm prompt).
 
 Scripted:
 
 ```sh
-ssh <you>@<gw> user del alice            # userdel -r alice (removes home dir too)
+ssh <you>@<gw> admin user del alice
 ```
 
-This removes the user account. Any `ssh -R` sockets she had registered will close on her next disconnect (sshd cleans them up via `StreamLocalBindUnlink yes`). Her existing certs will be effectively orphaned — they're still valid until expiry but there's no Linux account left.
+Runs `userdel -r` (removes the home dir too). Any `ssh -R` sockets they had will close on disconnect. Their certs are still valid until expiry, but with no Linux account left they're effectively orphaned.
 
 ## Wipe a user's authorized_keys
 
 ```sh
-ssh <you>@<gw> user forget-keys alice
+ssh <you>@<gw> admin user forget-keys alice
 ```
 
-Empties `/home/alice/.ssh/authorized_keys`. Useful if a non-mad key was added there by some other path and you want to force them through the cert flow.
+Empties `/home/alice/.ssh/authorized_keys` — blocks gateway login without touching their certs.
 
-## Things mad doesn't do
+## What mad doesn't do
 
-- It does **not** quotacheck or rate-limit. If you need that, layer it via PAM or systemd resource controls.
-- It does **not** manage user passwords. Cert auth doesn't need them; the OTP user doesn't have one.
+- No quotas or rate limits — layer those via PAM or systemd if needed.
+- No password management — cert auth doesn't need passwords.
 
-(Cert revocation — `mad cert revoke`, KRL distribution, `mad user lockout` — is documented in [revocation.md](revocation.md).)
+See `mad help revocation` for the cert side of access removal.

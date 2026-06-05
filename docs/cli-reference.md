@@ -1,92 +1,102 @@
 # CLI reference
 
-Every command shape, plus what permission it needs. Run any of them either by typing in the interactive menu (when applicable) or by `ssh mad <cmd>` from a client. When invoked through ssh, the subcommand string is passed via `SSH_ORIGINAL_COMMAND`.
+Every subcommand. Run them either by typing in the interactive menu or by `ssh mad <cmd>` from a client.
 
-The `Where` column tells you which socket the daemon-side command goes through:
-- **user** — `/run/mad/daemon.sock` (mode 0660 root:mad). Needs the `mad` group.
-- **root** — `/run/mad/daemon-root.sock` (mode 0600 root:root). Needs uid 0.
-- **n/a** — pure local action, no daemon involved.
+Permission notation:
 
-## Lifecycle (sysadmin)
+- **user** — needs the `mad` group (default for any enrolled user).
+- **admin** — needs the `mad-admin` group.
+- **root** — needs uid 0 on the gateway.
+- **client** — runs locally on your laptop, no daemon involved.
 
-| Command | Where | Notes |
-|---|---|---|
-| `mad daemon` | — | Runs the privileged daemon. Use systemd in prod. |
-| `mad setup` | n/a (root) | Idempotent: groups, dirs, CA, sshd snippet, systemd unit, `/usr/bin/mad` wrapper. |
-| `mad update` | n/a (root) | `git pull --ff-only` + `bun install` (if commit advanced) + `mad setup` + `systemctl restart mad-daemon`. |
+## System (sysadmin)
 
-## CA / certs
-
-| Command | Where | Notes |
-|---|---|---|
-| `mad ca pubkey` | user (or local if root) | Prints the CA public key. |
-| `mad ca sign <username>` | root | Reads pubkey on stdin, prints signed cert on stdout. |
-| `mad ca krl [--raw]` | user | Prints the current signed KRL (base64 by default, `--raw` for binary). Devices fetch this on every incoming tech connection. |
-| `mad cert refresh` | user | Reads your pubkey on stdin, prints a fresh cert reflecting your current group memberships. |
-| `mad cert ls [--user <u>]` | user | List certs. Non-root sees their own; root sees everyone's. |
-| `mad cert revoke --serial <n>` | root | Revoke by serial. |
-| `mad cert revoke --user <u>` | root | Revoke all currently-issued certs for a user. |
-| `mad cert unrevoke <serial>` | root | Remove from the revocation list. |
-
-## Groups
-
-| Command | Where | Notes |
-|---|---|---|
-| `mad group create <name> [--subnet <cidr>]` | mixed | `groupadd`, mkdir, `chown root:<gid>` + setgid, optional bridge if subnet given. No `--owner` — group dirs are `root:<group>`. |
-| `mad group ls` | n/a | Walks `/run/mad/groups/*`. |
-| `mad group members <name>` | n/a | Parses `getent group <name>`. |
-| `mad group add <group> <user>` | n/a | `usermod -aG <group> <user>`. |
-| `mad group rm <group> <user>` | n/a | `gpasswd -d <user> <group>`. |
-
-## Users
-
-| Command | Where | Notes |
-|---|---|---|
-| `mad user del <name>` | n/a (root) | `userdel -r`. |
-| `mad user forget-keys <name>` | n/a (root) | Empties `/home/<name>/.ssh/authorized_keys` — blocks GATEWAY login. Doesn't touch the KRL. |
-| `mad user lockout <name> [--reason …]` | mixed (root) | Both `cert revoke --user` and `forget-keys` — full lockout. |
-
-## Enrollment
-
-| Command | Where | Notes |
-|---|---|---|
-| `mad otp <username>` | root | Ensures the Linux user (creates if missing, adds to `mad,mad-users`), mints a 15-min OTP, sets it as the user's Linux password via `chpasswd`. Hand the OTP to the user. |
-| `mad enroll` | user | Run AS the enrolling user after `ssh user@gw enroll`. Prompts for pubkey, signs it, writes `authorized_keys`, locks the OTP password (`passwd -l`). |
-
-## Services (forwarding)
-
-| Command | Where | Notes |
-|---|---|---|
-| `mad service ls [group]` | n/a | Walks visible `/run/mad/groups/*/*.sock`. |
-| `mad service register <group/name> <addr:port>` | n/a | Prints the `ssh -R …` you'd run. |
-| `mad service use <group/name> <localport>` | n/a | Prints the `ssh -L …` you'd run. |
-| `mad service install <group/name> <addr:port> [--scope user\|system]` | n/a | Prints a bash install script that drops a systemd unit running `ssh -R`. Pipe to `sh`. See [forwarding.md](forwarding.md). |
-| `mad service install-ssh <group/device> [--tech-user <name>] [--scope user\|system]` | n/a | Prints a bash install script for a field device: trust mad CA, create shared user, set principals file, run `ssh -R …:22`. Pipe to `sudo sh` on the device. See [field-devices.md](field-devices.md). |
-
-## L2 VPN
-
-| Command | Where | Notes |
-|---|---|---|
-| `mad tun join <gw>/<group>` | client (Linux/macOS/Windows, root/admin) | Opens an SSH exec channel to `<gw>` running `mad tun-attach <group>`, then shuttles length-prefixed Ethernet/IP frames over the channel between the local TUN device and the gateway-allocated one. Holds the session in the foreground. |
-| `mad tun leave <gw>/<group>` | client | SIGTERM the held SSH; the local tun device vanishes; gateway side cleans up via the ppid poll; state record cleared. |
-| `mad tun ls` | client | Lists active tun sessions on this machine from `~/.config/mad/tun-state.json`. |
-| `mad tap {join,leave,ls}` | client (Linux/macOS/Windows) | Same as `tun` but L2 (Ethernet frames, bridged into `mad-<group>`). Windows requires the TAP-Windows6 driver — install with `mad doctor --install-l2-driver`. |
-| `mad doctor [--install-l2-driver]` | client (Windows) | Reports wintun + TAP-Windows6 status; optionally downloads + UAC-elevates the OpenVPN tap-windows installer. |
-| `mad gateway add <user@host> [--alias <a>]` | client | Appends a Host block to `~/.ssh/config` with `SetEnv MAD_GATEWAY=1`. |
-| `mad gateway ls / rm <alias> / test <alias>` | client | List / remove / round-trip-ping gateways. |
+- `mad daemon` — run the privileged daemon. Use systemd in prod. **root**
+- `mad system setup` — provision groups, dirs, CA, sshd snippet, systemd unit. Idempotent. **root**
+- `mad system update` — `git pull` + `bun install` + setup + restart daemon. **root**
+- `mad system ssh-config` — print an `ssh_config` Host block.
+- `mad system doctor` — diagnose client setup; can install Windows TAP driver.
 
 ## Help
 
-| Command | Where | Notes |
-|---|---|---|
-| `mad --help` | n/a | Standard Commander help. |
-| `mad <subcommand> --help` | n/a | Per-subcommand help. |
+- `mad help` — render the docs index.
+- `mad help <topic>` — render a specific topic (`install`, `enrollment`, `groups`, etc.).
+- `mad --help` / `mad <cmd> --help` — Commander help.
 
-## Notes on the interactive menu vs subcommands
+## Enrollment
 
-When a user in `mad-users` SSHes in, `ForceCommand /usr/bin/mad` fires. The behavior:
+- `mad admin otp <username>` — mint a 15-min OTP (creates the user if missing). **admin**
+- `mad enroll` — run AS the enrolling user, after `ssh <user>@<gw> enroll`. Pastes pubkey → writes `authorized_keys` → locks the OTP password.
 
-- No `SSH_ORIGINAL_COMMAND` → the interactive Inquirer menu opens.
-- `SSH_ORIGINAL_COMMAND` set (i.e., user typed `ssh server "service install …"`) → mad parses it as a Commander subcommand and runs the action non-interactively.
+## Gateways (client)
 
-So you can use any of the subcommands listed above either through the menu or programmatically. The menu omits a few that don't fit interactive use (`daemon`, `setup`, `update`).
+- `mad gateway add <user@host> [--alias <a>]` — append a Host block with `SetEnv MAD_GATEWAY=1`.
+- `mad gateway ls` — list aliases marked as mad gateways.
+- `mad gateway rm <alias>` — remove the Host block.
+- `mad gateway test <alias>` — round-trip-ping; prints latency and CA pubkey.
+
+## Services (forwarding)
+
+- `mad service ls [group]` — list visible services. Fans out across gateways by default.
+  - `--gateway <a>` — only one gateway.
+  - `--local-only` — skip fan-out.
+  - `--orphans` — include orphan socket files.
+  - `--json` — machine-readable.
+- `mad service register <group>/<name> <addr:port>` — print the `ssh -R …`.
+- `mad service use <group>/<name> <localport>` — print the `ssh -L …`.
+- `mad service install <group>/<name> <addr:port>` — print install script for an always-on forward.
+  - `--scope user|system` (default `user`).
+- `mad service install-ssh <group>/<device>` — print install script for a field device.
+  - `--tech-user <name>` (default `mad-tech`).
+  - `--scope user|system` (default `system`).
+
+The 3-segment form `<gateway>/<group>/<name>` is accepted by `register`/`use` to target a specific gateway alias from your ssh_config.
+
+## CA / certs
+
+- `mad ca pubkey` — print the CA public key.
+- `mad ca sign <username>` — sign a pubkey on stdin. **admin**
+- `mad ca krl [--raw]` — print the signed KRL (base64 default).
+- `mad cert refresh` — re-sign your pubkey (stdin) with your current group memberships as principals.
+- `mad cert ls [--user <u>]` — list certs. Non-admin sees only their own.
+- `mad cert revoke --serial <n>` — revoke by serial. **admin/root**
+- `mad cert revoke --user <u>` — revoke all of a user's currently-issued certs. **admin/root**
+- `mad cert unrevoke <serial>` — remove from the KRL. **admin/root**
+
+## Groups (admin)
+
+- `mad admin group create <name> [subnet]` — `groupadd` + setgid dir + optional bridge.
+- `mad admin group ls` — list `/run/mad/groups/*`.
+- `mad admin group members <name>` — `getent group <name>` parsed for members.
+- `mad admin group add <group> <user>` — `usermod -aG`.
+- `mad admin group rm <group> <user>` — `gpasswd -d`.
+
+## Users (admin)
+
+- `mad admin user del <name>` — `userdel -r` (removes home dir).
+- `mad admin user forget-keys <name>` — empty `/home/<name>/.ssh/authorized_keys`. Blocks gateway login; doesn't touch the KRL.
+
+## Usage
+
+- `mad usage` — your own usage (bytes + packets) per group.
+  - `--since <iso|epoch>`, `--until <iso|epoch>`, `--group <g>`.
+- `mad admin usage report` — per-user × per-group usage totals. **admin**
+- `mad admin usage export` — JSON or CSV dump for billing. **admin**
+
+## VPN (client, needs root locally)
+
+- `mad tap join <gw>/<group>` — L2 (Ethernet frames, bridged into `mad-<group>`).
+- `mad tun join <gw>/<group>` — L3 (IP unicast only).
+- `mad tap leave <gw>/<group>` / `mad tun leave <gw>/<group>` — close the tunnel.
+- `mad tap ls` / `mad tun ls` — active sessions on this machine.
+
+`mad tap join` on macOS falls back to L3. Windows needs the TAP-Windows6 driver — install via `mad system doctor --install-l2-driver`.
+
+## Menu vs subcommands
+
+`ForceCommand /usr/bin/mad` fires on every login for `mad-users` members:
+
+- No `SSH_ORIGINAL_COMMAND` → interactive menu.
+- With one → mad parses it as a subcommand and runs non-interactively.
+
+So every subcommand here works both ways. The menu hides a handful that don't fit interactive use (`daemon`, `tun-attach`, `service hold`, `service ping`).

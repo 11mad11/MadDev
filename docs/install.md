@@ -1,13 +1,12 @@
 # Installing the gateway
 
-Who: a sysadmin with root on the gateway box.
-What: clone the source, install runtime deps, run `mad setup` once.
+For a sysadmin with root on the gateway box.
 
-## Prerequisites on the gateway
+## Requirements
 
-- Linux with `systemd`, `openssh-server`, `iproute2`, `openssh-client` (used by `ssh-keygen` for signing).
+- Linux with `systemd`, `openssh-server`, `iproute2`, `openssh-client`.
 - `bun` ≥ 1.3 on `PATH`.
-- The box where you run this should be the one users SSH to.
+- This is the host users will SSH into.
 
 ## Install
 
@@ -15,77 +14,69 @@ What: clone the source, install runtime deps, run `mad setup` once.
 git clone <repo-url> /opt/mad
 cd /opt/mad
 bun install --production
-sudo bun run src/cli.ts setup
+sudo bun run src/cli.ts system setup
 ```
 
-`mad setup` is idempotent — it only acts on what's not already correct. Re-run it any time (notably after `mad update`).
+`mad system setup` is idempotent. Re-run it any time (notably after `mad system update`).
 
-What `mad setup` does:
+## What setup does
 
-| Step | Where | Detail |
-|---|---|---|
-| Create groups | `/etc/group` | `mad`, `mad-users`, `mad-admin` |
-| Make dirs | `/etc/mad/ca`, `/var/lib/mad`, `/run/mad/groups` | proper modes and ownership |
-| Materialize CA | `/etc/mad/ca/ca.key` (0400 root) | ed25519, generated on first run |
-| Publish CA pubkey | `/etc/ssh/mad_ca.pub` | what `TrustedUserCAKeys` reads |
-| Install wrapper | `/usr/bin/mad` | a shell script `exec bun run /opt/mad/src/cli.ts "$@"` |
-| Install sshd snippet | `/etc/ssh/sshd_config.d/99-mad.conf` | one `Match Group mad-users` block (ForceCommand, PasswordAuth for the OTP flow, StreamLocalBind knobs) |
-| Install systemd unit | `/etc/systemd/system/mad-daemon.service` | for the privileged daemon |
-| Reload sshd | only if the snippet changed | `systemctl reload-or-restart ssh` |
-| Enable+start daemon | only if unit changed or not running | `systemctl enable --now mad-daemon` |
+- Creates groups `mad`, `mad-users`, `mad-admin`.
+- Makes `/etc/mad/ca`, `/var/lib/mad`, `/run/mad/groups` with the right modes.
+- Generates `/etc/mad/ca/ca.key` (ed25519, 0400 root) on first run.
+- Publishes the CA pubkey to `/etc/ssh/mad_ca.pub`.
+- Installs the `/usr/bin/mad` wrapper.
+- Drops the sshd snippet at `/etc/ssh/sshd_config.d/99-mad.conf`.
+- Installs `mad-daemon.service` and starts it.
+- Reloads sshd only if the snippet actually changed.
 
-The output marks `✦` for changes and `·` for already-correct items.
+Output marks `✦` for changes and `·` for already-correct items.
 
-## sshd configuration installed by setup
+## sshd snippet
 
-Roughly (see `/etc/ssh/sshd_config.d/99-mad.conf` after setup):
+The snippet adds (roughly):
 
 ```
 TrustedUserCAKeys /etc/ssh/mad_ca.pub
-RevokedKeys /etc/ssh/mad_krl
+RevokedKeys       /etc/ssh/mad_krl
 
 Match Group mad-users
-    ForceCommand /usr/bin/mad
+    ForceCommand              /usr/bin/mad
     AllowStreamLocalForwarding all
-    StreamLocalBindMask 0117
-    StreamLocalBindUnlink yes
-    PasswordAuthentication yes
+    StreamLocalBindMask       0117
+    StreamLocalBindUnlink     yes
+    PasswordAuthentication    yes
 ```
 
-Members of `mad-users` land in the mad menu (no shell). `PasswordAuthentication yes` is required because the enrollment flow uses a 15-minute Linux password as the OTP — see [enrollment.md](enrollment.md). Once a user enrolls, the daemon locks their password (`passwd -l`), so subsequent logins are cert / pubkey only.
+`mad-users` members land in the mad menu (no shell). `PasswordAuthentication yes` is required for the OTP enrollment flow — see `mad help enrollment`. After enrolling, the daemon locks each user's password (`passwd -l`), so subsequent logins use their key.
 
-No PAM tweak required: this uses the standard PAM password path, not a `none` / `PermitEmptyPasswords` workaround.
+No PAM tweaks needed.
 
 ## Updating
 
 ```sh
-sudo mad update
+sudo mad system update
 ```
 
-That runs `git -C /opt/mad pull --ff-only`, then `bun install` if the commit advanced, then `mad setup` (idempotent), then `systemctl restart mad-daemon`. Safe to re-run.
+Runs `git pull --ff-only`, then `bun install` if the commit advanced, then `mad system setup`, then restarts the daemon. Safe to re-run.
 
-There is no auto-update built into the daemon. If you want it scheduled, wire `mad update` into a systemd timer.
+For scheduled updates, wire `mad system update` into a systemd timer.
 
-## File layout at runtime
+## Runtime layout
 
 ```
-/etc/mad/
-  ca/ca.key                          # 0400 root:root  (the CA private key)
-  ca/ca.pub                          # 0644 root:root
-  groups/<group>.json                # group metadata (owner, optional subnet)
+/etc/mad/ca/ca.key             # 0400 root:root  (CA private key)
+/etc/mad/ca/ca.pub             # 0644 root:root
+/etc/ssh/mad_ca.pub            # what TrustedUserCAKeys reads
+/etc/ssh/mad_krl               # KRL — revoked cert serials
+/etc/ssh/sshd_config.d/99-mad.conf
 
-/etc/ssh/
-  mad_ca.pub                         # what sshd's TrustedUserCAKeys reads
-  sshd_config.d/99-mad.conf
+/run/mad/daemon.sock           # 0660 root:mad
+/run/mad/daemon-root.sock      # 0600 root:root
+/run/mad/groups/<g>/           # 2770 root:<g>
+/run/mad/groups/<g>/<s>.sock   # created by `ssh -R`
 
-/run/mad/
-  daemon.sock                        # 0660 root:mad
-  daemon-root.sock                   # 0600 root:root (privileged ops)
-  groups/<group>/                    # 2770 <owner>:<group> (setgid)
-  groups/<group>/<service>.sock      # created by `ssh -R`
+/var/lib/mad/state.json        # 0640 root:mad
 
-/var/lib/mad/
-  state.json                         # 0640 root:mad (TAPs, OTPs, group netns)
-
-/usr/bin/mad                         # bash wrapper → bun run /opt/mad/src/cli.ts
+/usr/bin/mad                   # bash wrapper → bun run /opt/mad/src/cli.ts
 ```
