@@ -1,5 +1,11 @@
 # mad
 
+## 1.0.0-beta.1
+
+### Patch Changes
+
+- Fix Windows binary failing on launch with `Cannot find module './winAssetsEmbed'`. The dynamic-string `import(embedModule)` in `src/utils/winAssets.ts` was a defensive trick to keep Linux/macOS compiles from needing the Windows DLLs — but it also prevented bun's bundler from including the module in the Windows .exe. Replaced with a static import + an `ensure-vendor-stubs.sh` script that creates empty placeholder DLL files for Linux/macOS compiles. Windows compile now vendors a real `wintun.dll` from wintun.net via CI before building.
+
 ## 1.0.0-beta.0
 
 ### Minor Changes

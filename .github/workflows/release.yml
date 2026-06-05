@@ -60,10 +60,17 @@ jobs:
       - name: Install mingw-w64 toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y mingw-w64
+          sudo apt-get install -y mingw-w64 unzip
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
+      - name: Vendor wintun.dll (0.14.1)
+        run: |
+          curl -fsSL https://www.wintun.net/builds/wintun-0.14.1.zip -o /tmp/wintun.zip
+          unzip -q /tmp/wintun.zip -d /tmp/wintun-extract
+          mkdir -p native/windows-tap/vendor
+          cp /tmp/wintun-extract/wintun/bin/amd64/wintun.dll native/windows-tap/vendor/wintun.dll
+          ls -la native/windows-tap/vendor/wintun.dll
       - run: bun install --frozen-lockfile
       - run: bun run build:windows
       - uses: actions/upload-artifact@v4

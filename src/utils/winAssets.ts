@@ -26,16 +26,13 @@ if (process.platform !== "win32") {
     throw new Error("winAssets.ts imported on non-Windows platform");
 }
 
-// Dynamic import via a string variable so Bun's static bundler doesn't
-// pull `winAssetsEmbed.ts` (with its bun-with-file DLL imports) into a
-// Linux `bun build --compile` — those DLLs only exist on the Windows
-// toolchain. winAssets() is only called from win32 code paths so the
-// runtime require always succeeds when we actually reach it.
-const embedModule = "./winAssetsEmbed";
-const { wintunSource, madWintapSource } = await import(embedModule) as {
-    wintunSource: string;
-    madWintapSource: string;
-};
+// Static import so bun's bundler reliably includes `winAssetsEmbed.ts`
+// in the Windows compile. Non-Windows compiles satisfy bun's resolver
+// via empty stub DLL files at the same paths (see
+// `scripts/ensure-vendor-stubs.sh`); those embedded stubs are inert
+// because this module is never loaded on non-Windows hosts (see
+// `winNative.ts` import guard).
+import { wintunSource, madWintapSource } from "./winAssetsEmbed";
 
 function localAppDataNativeDir(): string {
     const root = process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? "C:\\Users\\Default", "AppData", "Local");
