@@ -29,13 +29,30 @@ export function getCurrentUserGroups(): string[] {
 }
 
 export function getGroupMembers(groupname: string): string[] {
-    const r = spawnSync("getent", ["group", groupname], { encoding: "utf-8" });
-    if (r.status !== 0)
+    const groupRes = spawnSync("getent", ["group", groupname], { encoding: "utf-8" });
+    if (groupRes.status !== 0)
         return [];
-    const line = r.stdout.trim();
-    const parts = line.split(":");
-    const members = parts[3] ?? "";
-    return members.split(",").map(s => s.trim()).filter(Boolean);
+    const parts = groupRes.stdout.trim().split(":");
+    const gid = parts[2] ?? "";
+    const supplementary = (parts[3] ?? "").split(",").map(s => s.trim()).filter(Boolean);
+
+    // Also include users whose PRIMARY group is this one — `/etc/group`'s
+    // members field only lists supplementary members, so users created with
+    // `useradd -g <group>` (mad's own enrollment path for service-scoped
+    // accounts like `smb`) don't appear there even though they have full
+    // group access via getgroups(2).
+    const primary: string[] = [];
+    if (gid) {
+        const passwdRes = spawnSync("getent", ["passwd"], { encoding: "utf-8" });
+        if (passwdRes.status === 0) {
+            for (const line of passwdRes.stdout.split("\n")) {
+                const f = line.split(":");
+                if (f[3] === gid && f[0]) primary.push(f[0]);
+            }
+        }
+    }
+
+    return [...new Set([...primary, ...supplementary])];
 }
 
 export function getGroupGid(groupname: string): number | undefined {
