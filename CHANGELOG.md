@@ -1,5 +1,11 @@
 # mad
 
+## 1.0.0-beta.0
+
+### Minor Changes
+
+- First beta. Builds for Linux x64, macOS x64/arm64, and Windows x64 are now produced by CI on every `v*` tag push and attached to the GitHub release.
+
 ## 1.0.0-alpha.0
 
 ### Major Changes

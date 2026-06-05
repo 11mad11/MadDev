@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and release (e.g. v1.0.0-beta.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run build:linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mad-linux-x64
+          path: dist/mad-linux-x64
+          if-no-files-found: error
+
+  build-macos:
+    name: Build macOS x64 + arm64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run build:macos-x64
+      - run: bun run build:macos-arm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mad-darwin
+          path: |
+            dist/mad-darwin-x64
+            dist/mad-darwin-arm64
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows x64 (cross from Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install mingw-w64 toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - run: bun install --frozen-lockfile
+      - run: bun run build:windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mad-windows-x64
+          path: dist/mad-windows-x64.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: List downloaded artifacts
+        run: ls -lR artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            artifacts/mad-linux-x64/mad-linux-x64
+            artifacts/mad-darwin/mad-darwin-x64
+            artifacts/mad-darwin/mad-darwin-arm64
+            artifacts/mad-windows-x64/mad-windows-x64.exe
+          generate_release_notes: true
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
+          fail_on_unmatched_files: true
