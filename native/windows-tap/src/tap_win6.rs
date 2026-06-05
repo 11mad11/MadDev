@@ -232,6 +232,50 @@ fn to_wide(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
 }
 
+/// Read a string-valued registry entry at HKLM\<key_path>\<value_name>.
+/// Accepts REG_SZ, REG_EXPAND_SZ, and REG_MULTI_SZ — for MULTI_SZ we
+/// only care about the first entry (which is what `tap0901` lives as,
+/// the primary HardwareID under Enum\ROOT\NET\<N>). Truncates at the
+/// first NUL so the caller doesn't have to deal with terminators.
+fn read_string_value(key_path: &str, value_name: &str) -> Option<String> {
+    const REG_EXPAND_SZ: u32 = 2;
+    const REG_MULTI_SZ: u32 = 7;
+    let path_wide = to_wide(key_path);
+    let mut hkey: HKEY = null_mut();
+    let rc = unsafe {
+        RegOpenKeyExW(HKEY_LOCAL_MACHINE, path_wide.as_ptr(), 0, KEY_READ, &mut hkey)
+    };
+    if rc != ERROR_SUCCESS {
+        return None;
+    }
+    let val_wide = to_wide(value_name);
+    let mut data = [0u16; 512];
+    let mut data_size = (data.len() * size_of::<u16>()) as u32;
+    let mut value_type: u32 = 0;
+    let rc = unsafe {
+        RegQueryValueExW(
+            hkey,
+            val_wide.as_ptr(),
+            null_mut(),
+            &mut value_type,
+            data.as_mut_ptr() as *mut u8,
+            &mut data_size,
+        )
+    };
+    unsafe { RegCloseKey(hkey) };
+    if rc != ERROR_SUCCESS
+        || (value_type != REG_SZ && value_type != REG_EXPAND_SZ && value_type != REG_MULTI_SZ)
+    {
+        return None;
+    }
+    let chars = (data_size as usize) / size_of::<u16>();
+    let mut s = String::from_utf16_lossy(&data[..chars]);
+    if let Some(pos) = s.find('\0') {
+        s.truncate(pos);
+    }
+    Some(s)
+}
+
 /// Enumerate Net-class adapters and look for one whose `\Connection`
 /// "Name" REG_SZ value matches our requested adapter name. Returns
 /// the NetCfgInstanceId GUID string (no braces handling — the
@@ -407,48 +451,41 @@ fn enumerate_tap_adapter_names() -> Vec<String> {
         }
         index += 1;
         let subkey_name = String::from_utf16_lossy(&name_buf[..name_len as usize]);
+
+        // Filter on HardwareID == "tap0901" (the TAP-Windows6 driver's
+        // hardware identifier — locale-independent and fixed). The
+        // previous filter looked at the Connection's friendly Name and
+        // matched only the English default "TAP-Windows Adapter…", so
+        // on French/German/etc. Windows the friendly name is
+        // "Connexion au réseau local" / "LAN-Verbindung" / …, every
+        // TAP adapter was filtered out, and create_and_rename_adapter
+        // saw an empty set-difference and bailed with
+        // "tapinstall succeeded but no new TAP adapter appeared".
+        //
+        // Network\{net-class}\<GUID>\Connection.PnpInstanceID points
+        // at Enum\<PnpInstanceID> which has the HardwareID.
         let conn_path = format!("{}\\{}\\Connection", NET_CLASS_KEY, subkey_name);
-        let conn_wide = to_wide(&conn_path);
-        let mut conn_hkey: HKEY = null_mut();
-        let rc = unsafe {
-            RegOpenKeyExW(
-                HKEY_LOCAL_MACHINE,
-                conn_wide.as_ptr(),
-                0,
-                KEY_READ,
-                &mut conn_hkey,
-            )
+        let pnp_id = match read_string_value(&conn_path, "PnpInstanceID") {
+            Some(v) => v,
+            None => continue,
         };
-        if rc != ERROR_SUCCESS {
+        let enum_path = format!("SYSTEM\\CurrentControlSet\\Enum\\{}", pnp_id);
+        let hw_id = match read_string_value(&enum_path, "HardwareID") {
+            Some(v) => v,
+            None => continue,
+        };
+        if hw_id != "tap0901" {
             continue;
         }
-        let name_val = to_wide("Name");
-        let mut data = [0u16; 256];
-        let mut data_size = (data.len() * size_of::<u16>()) as u32;
-        let mut value_type: u32 = 0;
-        let rc = unsafe {
-            RegQueryValueExW(
-                conn_hkey,
-                name_val.as_ptr(),
-                null_mut(),
-                &mut value_type,
-                data.as_mut_ptr() as *mut u8,
-                &mut data_size,
-            )
+        // Friendly Name (localized). For freshly-installed adapters
+        // it can briefly be empty until Windows fills it in — skip
+        // those rather than push "" into the set, which would conflict
+        // with another fresh adapter and break the set-difference.
+        let friendly = match read_string_value(&conn_path, "Name") {
+            Some(v) if !v.is_empty() => v,
+            _ => continue,
         };
-        unsafe { RegCloseKey(conn_hkey) };
-        if rc != ERROR_SUCCESS || value_type != REG_SZ {
-            continue;
-        }
-        let chars = (data_size as usize) / size_of::<u16>();
-        let mut friendly = String::from_utf16_lossy(&data[..chars]);
-        if let Some(pos) = friendly.find('\0') {
-            friendly.truncate(pos);
-        }
-        // TAP-Windows6 default adapter names start with "TAP-Windows Adapter V9"
-        if friendly.starts_with("TAP-Windows Adapter") || friendly.starts_with("mad-") {
-            names.push(friendly);
-        }
+        names.push(friendly);
     }
     unsafe { RegCloseKey(class_hkey) };
     names

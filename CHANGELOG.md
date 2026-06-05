@@ -1,5 +1,12 @@
 # mad
 
+## 1.0.0-beta.3
+
+### Patch Changes
+
+- Fix `mad tap join` on non-English Windows installs failing with `mad_l2_create_adapter(...): tapinstall succeeded but no new TAP adapter appeared`. The Rust `enumerate_tap_adapter_names()` filtered TAP-Windows6 adapters by the friendly Name's English prefix (`"TAP-Windows Adapter"` / `"mad-"`). On French/German/Spanish/etc. Windows the friendly Name is localized (`"Connexion au réseau local"`, `"LAN-Verbindung"`, …) so every TAP adapter was filtered out, the before/after set-difference was empty, and the create-and-rename step bailed even though `tapinstall.exe` had successfully created the new adapter. Now filters by the device's HardwareID (`tap0901`) read via `Connection.PnpInstanceID` → `Enum\<PnpInstanceID>.HardwareID` — locale-independent. Verified end-to-end on French Windows 10.
+- `mad admin group members <name>` now also lists users whose primary group is `<name>` (previously only walked `/etc/group`'s supplementary-members field).
+
 ## 1.0.0-beta.2
 
 ### Patch Changes
